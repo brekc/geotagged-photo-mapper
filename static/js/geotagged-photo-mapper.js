@@ -599,6 +599,18 @@ document.addEventListener('mouseup', () => {
 });
 
 
+// ======== SOURCE PATH AUTO-SLASH ========
+document.getElementById('source-path').addEventListener('blur', function () {
+  const val = this.value.trim();
+  if (!val) { this.value = ''; return; }
+  if (!/[/\\]$/.test(val)) {
+    this.value = val + (val.includes('\\') ? '\\' : '/');
+  } else {
+    this.value = val;
+  }
+});
+
+
 // ======== UTILITIES ========
 function escapeHtml(str) {
   return String(str)
