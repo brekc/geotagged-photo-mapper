@@ -69,7 +69,6 @@ uvicorn geotagged_photo_mapper:app --reload
 
 ## How It Works
 
-```
 Upload images → FastAPI receives files
   → PyExifTool extracts GPS tags (latitude, longitude, altitude, datetime, camera)
   → GeoPandas builds a GeoDataFrame
@@ -79,7 +78,6 @@ Upload images → FastAPI receives files
 On Download → GeoPandas reprojects to the selected CRS
   → Optional metadata columns appended (Photo Source, Flight Altitude AGL)
   → Written to the chosen format via GeoPandas
-```
 
 ---
 
