@@ -201,7 +201,7 @@ def build_geojson(features):
 
 @app.get('/')
 async def index(request: Request):
-    return templates.TemplateResponse(request, 'index.html')
+    return templates.TemplateResponse(request, 'geotagged-photo-mapper.html')
 
 
 @app.post('/upload')
