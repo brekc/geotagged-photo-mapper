@@ -7,7 +7,7 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 ## Quick Start (Choose Your Own Adventure)
 
 ```bash
-git clone https://github.com/your-username/geotagged-photo-mapper.git
+git clone https://github.com/brekc/geotagged-photo-mapper.git
 cd geotagged-photo-mapper
 ```
 
@@ -44,8 +44,8 @@ cd geotagged-photo-mapper
 No additional installs needed — ExifTool and all geospatial dependencies are bundled in the image.
 
 ```bash
-docker build -t photo-mapper .
-docker run -p 8000:8000 -v photo-mapper-data:/app/data photo-mapper
+docker build -t geotagged-photo-mapper .
+docker run -p 8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
 ```
 
 The `-v` flag mounts a named volume for the spatial data cache so it persists across container restarts.
