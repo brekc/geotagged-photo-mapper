@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geotagged Photo Mapper</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/geotagged-photo-mapper.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-inner">
+
+      <!-- Title -->
+      <div>
+        <h1>Geotagged Photo Mapper</h1>
+        <p class="subtitle">Upload geotagged photos to plot their locations on the map.</p>
+      </div>
+
+      <!-- Upload section -->
+      <div class="section">
+        <div class="section-header">Upload</div>
+
+        <div id="drop-zone">
+          Drag &amp; drop photos here<br>
+          or <strong style="color:#0284c7">click to browse</strong>
+        </div>
+        <input id="file-input" type="file" accept="image/*" multiple hidden>
+
+        <button id="upload-btn" disabled>Upload &amp; Map</button>
+        <div id="status">No files selected.</div>
+      </div>
+
+      <!-- Results list -->
+      <div class="section" id="results-section">
+        <div class="section-header">Geotagged Photos</div>
+        <ul id="results-list"></ul>
+      </div>
+
+      <!-- Flight Details section -->
+      <div class="section" id="flight-details-section">
+        <div class="section-header">Flight Details (optional)</div>
+
+        <div>
+          <label for="flight-altitude">Flight Altitude AGL</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="flight-altitude" type="number" min="0" step="any"
+              placeholder="e.g. 120" style="flex:1; width:auto;">
+            <select id="altitude-unit" style="width:auto; flex-shrink:0;">
+              <option value="feet">feet</option>
+              <option value="meters">meters</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export section (hidden until geotagged photos are found) -->
+      <div class="section" id="export-section">
+        <div class="section-header">Export</div>
+
+        <div>
+          <label for="format-select">Format</label>
+          <select id="format-select">
+            <option value="geojson">GeoJSON (.geojson)</option>
+            <option value="geopackage">GeoPackage (.gpkg)</option>
+            <option value="filegdb">File Geodatabase (.gdb)</option>
+            <option value="shapefile">Shapefile (.shp)</option>
+            <option value="kml">KML (.kml)</option>
+            <option value="csv">CSV (.csv)</option>
+          </select>
+        </div>
+
+        <div id="common-crs-section">
+          <label for="common-crs-select">Common CRS</label>
+          <select id="common-crs-select">
+            <option value="">-- Select --</option>
+            <option value="4326">WGS 84 — GPS / Lat-Lon (EPSG:4326)</option>
+            <option value="3857">Web Mercator (EPSG:3857)</option>
+          </select>
+        </div>
+
+        <div id="region-crs-section" style="display:flex; flex-direction:column; gap:10px;">
+          <div>
+            <label for="region-select">Region</label>
+            <select id="region-select">
+            <option value="">-- Select a region --</option>
+            <optgroup label="United States">
+              <option value="Alabama">Alabama</option>
+              <option value="Alaska">Alaska</option>
+              <option value="Arizona">Arizona</option>
+              <option value="Arkansas">Arkansas</option>
+              <option value="California">California</option>
+              <option value="Colorado">Colorado</option>
+              <option value="Connecticut">Connecticut</option>
+              <option value="Delaware">Delaware</option>
+              <option value="Florida">Florida</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Hawaii">Hawaii</option>
+              <option value="Idaho">Idaho</option>
+              <option value="Illinois">Illinois</option>
+              <option value="Indiana">Indiana</option>
+              <option value="Iowa">Iowa</option>
+              <option value="Kansas">Kansas</option>
+              <option value="Kentucky">Kentucky</option>
+              <option value="Louisiana">Louisiana</option>
+              <option value="Maine">Maine</option>
+              <option value="Maryland">Maryland</option>
+              <option value="Massachusetts">Massachusetts</option>
+              <option value="Michigan">Michigan</option>
+              <option value="Minnesota">Minnesota</option>
+              <option value="Mississippi">Mississippi</option>
+              <option value="Missouri">Missouri</option>
+              <option value="Montana">Montana</option>
+              <option value="Nebraska">Nebraska</option>
+              <option value="Nevada">Nevada</option>
+              <option value="New Hampshire">New Hampshire</option>
+              <option value="New Jersey">New Jersey</option>
+              <option value="New Mexico">New Mexico</option>
+              <option value="New York">New York</option>
+              <option value="North Carolina">North Carolina</option>
+              <option value="North Dakota">North Dakota</option>
+              <option value="Ohio">Ohio</option>
+              <option value="Oklahoma">Oklahoma</option>
+              <option value="Oregon">Oregon</option>
+              <option value="Pennsylvania">Pennsylvania</option>
+              <option value="Rhode Island">Rhode Island</option>
+              <option value="South Carolina">South Carolina</option>
+              <option value="South Dakota">South Dakota</option>
+              <option value="Tennessee">Tennessee</option>
+              <option value="Texas">Texas</option>
+              <option value="Utah">Utah</option>
+              <option value="Vermont">Vermont</option>
+              <option value="Virginia">Virginia</option>
+              <option value="Washington">Washington</option>
+              <option value="West Virginia">West Virginia</option>
+              <option value="Wisconsin">Wisconsin</option>
+              <option value="Wyoming">Wyoming</option>
+            </optgroup>
+            <optgroup label="Canada">
+              <option value="Alberta">Alberta</option>
+              <option value="British Columbia">British Columbia</option>
+              <option value="Manitoba">Manitoba</option>
+              <option value="New Brunswick">New Brunswick</option>
+              <option value="Newfoundland">Newfoundland</option>
+              <option value="Nova Scotia">Nova Scotia</option>
+              <option value="Ontario">Ontario</option>
+              <option value="Prince Edward Island">Prince Edward Island</option>
+              <option value="Quebec">Quebec</option>
+              <option value="Saskatchewan">Saskatchewan</option>
+            </optgroup>
+            <optgroup label="Countries">
+              <option value="Australia">Australia</option>
+              <option value="Brazil">Brazil</option>
+              <option value="France">France</option>
+              <option value="Germany">Germany</option>
+              <option value="Ireland">Ireland</option>
+              <option value="Japan">Japan</option>
+              <option value="Mexico">Mexico</option>
+              <option value="Netherlands">Netherlands</option>
+              <option value="New Zealand">New Zealand</option>
+              <option value="Norway">Norway</option>
+              <option value="South Africa">South Africa</option>
+              <option value="Spain">Spain</option>
+              <option value="Sweden">Sweden</option>
+              <option value="United Kingdom">United Kingdom</option>
+            </optgroup>
+          </select>
+          </div>
+
+          <div id="crs-filter-controls">
+            <div class="crs-filter-row">
+              <label>Units</label>
+              <div class="toggle-group">
+                <button class="toggle-btn active" data-units="meters">Meters</button>
+                <button class="toggle-btn" data-units="both">Both</button>
+                <button class="toggle-btn" data-units="feet">Feet</button>
+              </div>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="show-all-datums">
+              Show all datum realizations
+            </label>
+          </div>
+
+          <div>
+            <label for="crs-options-select">Available CRS</label>
+            <select id="crs-options-select" disabled>
+              <option value="">-- Select a region first --</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="crs-selected-label">Using: WGS 84 — GPS / Lat-Lon (EPSG:4326)</div>
+
+        <div>
+          <label for="custom-epsg">EPSG Code</label>
+          <input id="custom-epsg" type="text" placeholder="e.g. 26910">
+          <div style="font-size:13px; color:#475569; margin-top:4px;">
+            Note: entering an EPSG code here will override the region CRS selection above.
+          </div>
+        </div>
+
+        <div>
+          <label for="source-path">Photo Source <span style="font-weight:400; color:#64748b;">(optional)</span></label>
+          <input id="source-path" type="text"
+            placeholder="e.g. C:\Photos\project\ or S3://bucket/folder/">
+        </div>
+
+        <div>
+          <label for="export-name">Export Filename</label>
+          <input id="export-name" type="text" placeholder="photo_locations">
+          <div style="font-size:13px; color:#475569; margin-top:4px;">
+            No extension needed — it will be added automatically.
+          </div>
+        </div>
+
+        <button id="download-btn">Download</button>
+      </div>
+
+      <!-- Reference layers -->
+      <div class="section">
+        <div class="section-header">Reference Layers</div>
+        <label class="checkbox-label">
+          <input type="checkbox" id="layer-utm"> UTM Zones
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="layer-sp"> US State Plane Zones
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+</div>
+
+<!-- Lightbox overlay -->
+<div id="lightbox">
+  <button id="lightbox-close">Close</button>
+  <div id="lightbox-stage">
+    <img id="lightbox-img" src="" alt="Full size photo">
+  </div>
+  <div id="lightbox-hint">Scroll to zoom &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Double-click to reset</div>
+</div>
+
+<script src="/static/js/geotagged-photo-mapper.js"></script>
+</body>
+</html>

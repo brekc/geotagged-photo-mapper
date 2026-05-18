@@ -1,0 +1,19 @@
+name: geotagged-photo-mapper
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pandas
+  - geopandas
+  - shapely
+  - pyproj
+  - gdal
+  - exiftool
+  - fastapi
+  - uvicorn
+  - python-multipart
+  - jinja2
+  - pip
+  - pip:
+    - PyExifTool

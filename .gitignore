@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.tmp
+.env
+
+# Virtual environments
+venv/
+.venv/
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+
+# Auto-downloaded / auto-built spatial data (rebuilt on first run)
+/data/cb_2023_us_county_20m.zip
+/data/counties_20m/
+/data/state_plane_reference.csv
+/data/state_plane_zones.geojson
+
+# OS
+.DS_Store
+Thumbs.db
