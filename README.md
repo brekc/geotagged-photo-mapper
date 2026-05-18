@@ -4,10 +4,19 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 
 ---
 
+## Local & Private
+
+This app runs as a **local web server** — no account or login required. Open the URL it prints (usually `http://localhost:8000`) in any browser on the same machine, or share the address with other devices on the same network. Photos are loaded into memory during processing and are never written to disk or sent to any external server. The only outbound connections are basemap tile requests to OpenStreetMap, CartoDB, or USGS.
+
+---
+
 ## Quick Start (Choose Your Own Adventure)
 
 ```bash
 git clone https://github.com/brekc/geotagged-photo-mapper.git
+```
+
+```bash
 cd geotagged-photo-mapper
 ```
 
@@ -32,11 +41,19 @@ cd geotagged-photo-mapper
    ```
 
 2. Create the environment and run:
+
    ```bash
    conda env create -f environment.yml
+   ```
+
+   ```bash
    conda activate geotagged-photo-mapper
+   ```
+
+   ```bash
    uvicorn geotagged_photo_mapper:app --reload
    ```
+
    If port 8000 is already in use: `uvicorn geotagged_photo_mapper:app --reload --port 8001`
 
 ### Option B — Docker
@@ -45,6 +62,9 @@ No additional installs needed — ExifTool and all geospatial dependencies are b
 
 ```bash
 docker build -t geotagged-photo-mapper .
+```
+
+```bash
 docker run -p 8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
 ```
 
@@ -60,8 +80,17 @@ ExifTool must be installed and on your `PATH` first (see step 1 in Option A).
 
 ```bash
 python -m venv .venv
+```
+
+```bash
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
+
+```bash
 pip install -r requirements.txt
+```
+
+```bash
 uvicorn geotagged_photo_mapper:app --reload
 ```
 
@@ -69,15 +98,42 @@ uvicorn geotagged_photo_mapper:app --reload
 
 ## How It Works
 
-Upload images → FastAPI receives files
-  → PyExifTool extracts GPS tags (latitude, longitude, altitude, datetime, camera)
-  → GeoPandas builds a GeoDataFrame
-  → Leaflet.js renders markers on an interactive basemap
-     (OpenStreetMap, CartoDB Voyager, or USGS Imagery + Topo)
+**Upload**
 
-On Download → GeoPandas reprojects to the selected CRS
-  → Optional metadata columns appended (Photo Source, Flight Altitude AGL)
-  → Written to the chosen format via GeoPandas
+1. FastAPI receives the uploaded image files
+2. PyExifTool extracts GPS metadata — latitude, longitude, altitude, datetime, and camera model
+3. GeoPandas builds a GeoDataFrame from the extracted points
+4. Leaflet.js renders circle markers on an interactive basemap
+
+**Download**
+
+1. GeoPandas reprojects the GeoDataFrame to the selected CRS
+2. Optional metadata columns are appended — Photo Source path and Flight Altitude AGL
+3. The file is written in the chosen format (GeoJSON, GeoPackage, File Geodatabase, Shapefile, KML, or CSV)
+
+---
+
+## Architecture
+
+### Backend (Python / FastAPI)
+
+The server exposes four data endpoints:
+
+- **`POST /upload`** — Receives image files, extracts GPS EXIF metadata via PyExifTool, and returns a GeoJSON FeatureCollection
+- **`POST /export`** — Reprojects the current GeoDataFrame to the selected CRS via GeoPandas and streams the file to the browser
+- **`GET /crs-search`** — Queries pyproj's CRS database by region name for the region CRS dropdown
+- **`GET /zone-geojson`** — Returns UTM or US State Plane zone polygons for the reference layer toggles; State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
+
+### Frontend (Vanilla JS / Leaflet.js)
+
+A single-page interface served from `templates/geotagged-photo-mapper.html`:
+
+- Drag-and-drop or click-to-browse photo upload
+- Leaflet map with selectable basemaps (OpenStreetMap, CartoDB Voyager, USGS Imagery + Topo)
+- Export panel: format selector, CRS picker (common presets, region search, or manual EPSG override), optional Photo Source and Flight Altitude AGL fields
+- Reference layer toggles for UTM Zones and US State Plane Zones; clicking a zone polygon sets its CRS for export
+- Photo popups with thumbnail previews and a zoom/pan lightbox
+- Results list with click-to-fly navigation
 
 ---
 
