@@ -4,6 +4,21 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 
 ---
 
+## Browser Demo (GitHub Pages)
+
+A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs entirely in the browser — no Python, no server, no build tools. EXIF data is read locally via [exifr](https://github.com/MikeKovarik/exifr); photos never leave the device.
+
+**To deploy via GitHub Pages:**
+
+1. Go to your repository → **Settings** → **Pages**
+2. Under **Source**, select **Deploy from a branch**
+3. Choose branch `main` (or `master`) and folder **`/ (root)`**
+4. Save — the demo will be available at `https://<user>.github.io/<repo>/geotagged-photo-mapper-demo/`
+
+The full-featured Python app (export, CRS picker, etc.) requires the local/Docker setup below.
+
+---
+
 ## Local & Private
 
 This app runs as a **local web server** — no account or login required. Open the URL it prints (usually `http://localhost:8000`) in any browser on the same machine, or share the address with other devices on the same network. Photos are loaded into memory during processing and are never written to disk or sent to any external server. The only outbound connections are basemap tile requests to OpenStreetMap, CartoDB, or USGS.
