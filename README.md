@@ -10,13 +10,6 @@ A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo
 
 **Live demo:** https://brekc.github.io/geotagged-photo-mapper/geotagged-photo-mapper-demo/
 
-**To deploy via GitHub Pages:**
-
-1. Go to your repository → **Settings** → **Pages**
-2. Under **Source**, select **Deploy from a branch**
-3. Choose branch `main` (or `master`) and folder **`/ (root)`**
-4. Save — the demo will be available at `https://<user>.github.io/<repo>/geotagged-photo-mapper-demo/`
-
 The full-featured Python app (export, CRS picker, etc.) requires the local/Docker setup below.
 
 ---
