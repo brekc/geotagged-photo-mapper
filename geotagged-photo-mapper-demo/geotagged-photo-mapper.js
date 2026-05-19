@@ -73,7 +73,7 @@ function isAccepted(file) {
 
 async function handleFiles(fileList) {
   if (typeof exifr === 'undefined') {
-    statusEl.textContent = 'Error: EXIF library failed to load. Check your connection and reload.';
+    statusEl.textContent = 'Error: EXIF library failed to load. Reload the page.';
     return;
   }
 
