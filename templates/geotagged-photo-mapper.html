@@ -227,9 +227,15 @@
       <!-- Reference layers -->
       <div class="section">
         <div class="section-header">Reference Layers</div>
-        <label class="checkbox-label">
-          <input type="checkbox" id="layer-utm"> UTM Zones
-        </label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label class="checkbox-label" style="margin-bottom:0;">
+            <input type="checkbox" id="layer-utm"> UTM Zones
+          </label>
+          <select id="utm-datum" style="font-size:12px; padding:2px 6px; width:auto;">
+            <option value="wgs84">WGS 84</option>
+            <option value="nad83">NAD83</option>
+          </select>
+        </div>
         <label class="checkbox-label">
           <input type="checkbox" id="layer-sp"> US State Plane Zones
         </label>
