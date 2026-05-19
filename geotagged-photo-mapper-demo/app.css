@@ -1,0 +1,72 @@
+/* Demo-specific styles — layered on top of geotagged-photo-mapper.css */
+
+/* ── Privacy notice ── */
+.privacy-notice {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #1e40af;
+  line-height: 1.5;
+}
+
+/* ── Drop zone hint line ── */
+.drop-limit {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* ── Result timestamp line ── */
+.result-dt {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* ── Result items: no thumb, text only ── */
+#results-list li {
+  align-items: flex-start;
+}
+
+/* ── Clear All button ── */
+#clear-btn {
+  background: #dc2626;
+  color: #fff;
+  margin-top: 4px;
+}
+
+#clear-btn:hover {
+  background: #b91c1c;
+}
+
+/* ── Popup: no image, tighter padding ── */
+.photo-popup .popup-meta {
+  min-width: 160px;
+}
+
+/* ── Mobile layout ── */
+@media (max-width: 768px) {
+  html, body {
+    overflow: auto;
+  }
+
+  #app {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  #sidebar {
+    width: 100%;
+    min-width: unset;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+
+  #map {
+    min-height: 45vh;
+    flex: 1;
+  }
+}

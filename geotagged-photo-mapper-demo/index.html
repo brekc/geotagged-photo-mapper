@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geotagged Photo Mapper — Browser Demo</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.cjs"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Reuse project styles; app.css adds demo-specific overrides -->
+  <link rel="stylesheet" href="../static/css/geotagged-photo-mapper.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-inner">
+
+      <!-- Title -->
+      <div>
+        <h1>Geotagged Photo Mapper</h1>
+        <p class="subtitle">Drop JPEG or HEIC photos to plot their GPS locations on the map — runs entirely in your browser.</p>
+      </div>
+
+      <!-- Privacy notice -->
+      <div class="privacy-notice">
+        <strong>Private by design.</strong> No uploads, no server, no tracking.
+        Coordinates are read from EXIF data locally — your photos never leave your device.
+      </div>
+
+      <!-- Upload / drop zone -->
+      <div class="section">
+        <div class="section-header">Photos</div>
+
+        <div id="drop-zone">
+          Drag &amp; drop JPEG or HEIC photos here<br>
+          or <strong style="color:#0284c7">click to browse</strong><br>
+          <span class="drop-limit">Max 10 photos per session</span>
+        </div>
+        <input id="file-input" type="file" accept=".jpg,.jpeg,.heic,.heif" multiple hidden>
+
+        <div id="status">No files selected.</div>
+      </div>
+
+      <!-- Results (hidden until photos are mapped) -->
+      <div class="section" id="results-section">
+        <div class="section-header">Mapped Photos</div>
+        <ul id="results-list"></ul>
+        <button id="clear-btn">Clear All</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
