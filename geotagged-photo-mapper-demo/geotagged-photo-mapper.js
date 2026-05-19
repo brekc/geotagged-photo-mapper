@@ -24,7 +24,7 @@ const markerLayer = L.layerGroup().addTo(map);
 
 // ======== STATE ========
 const MAX_PHOTOS = 10;
-let photos = [];
+let photos = []; // { filename, lat, lon, datetime, marker }
 
 
 // ======== DOM REFS ========
@@ -61,13 +61,22 @@ function isAccepted(file) {
   const type = file.type.toLowerCase();
   const name = file.name.toLowerCase();
   return (
-    type === 'image/jpeg' || type === 'image/heic' || type === 'image/heif' ||
-    name.endsWith('.jpg') || name.endsWith('.jpeg') ||
-    name.endsWith('.heic') || name.endsWith('.heif')
+    type === 'image/jpeg' ||
+    type === 'image/heic' ||
+    type === 'image/heif' ||
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.heic') ||
+    name.endsWith('.heif')
   );
 }
 
 async function handleFiles(fileList) {
+  if (typeof exifr === 'undefined') {
+    statusEl.textContent = 'Error: EXIF library failed to load. Check your connection and reload.';
+    return;
+  }
+
   const incoming = Array.from(fileList).filter(isAccepted);
 
   if (incoming.length === 0) {
@@ -90,17 +99,28 @@ async function handleFiles(fileList) {
   let noGps  = 0;
 
   for (const file of toProcess) {
-    const exif = await readJpegGps(file);
+    try {
+      const [gps, meta] = await Promise.all([
+        exifr.gps(file).catch(() => null),
+        exifr.parse(file, ['DateTimeOriginal']).catch(() => null),
+      ]);
 
-    if (!exif || exif.lat == null || exif.lon == null) {
+      if (!gps || gps.latitude == null || gps.longitude == null) {
+        noGps++;
+        continue;
+      }
+
+      const lat      = gps.latitude;
+      const lon      = gps.longitude;
+      const datetime = meta?.DateTimeOriginal ? formatDatetime(meta.DateTimeOriginal) : null;
+
+      const marker = addMarker(file.name, lat, lon, datetime);
+      photos.push({ filename: file.name, lat, lon, datetime, marker });
+      addResultItem(file.name, lat, lon, datetime, marker);
+      mapped++;
+    } catch (_) {
       noGps++;
-      continue;
     }
-
-    const marker = addMarker(file.name, exif.lat, exif.lon, exif.datetime);
-    photos.push({ filename: file.name, lat: exif.lat, lon: exif.lon, datetime: exif.datetime, marker });
-    addResultItem(file.name, exif.lat, exif.lon, exif.datetime, marker);
-    mapped++;
   }
 
   const parts = [];
@@ -128,20 +148,26 @@ function addMarker(filename, lat, lon, datetime) {
     fillOpacity: 0.8,
   });
 
-  const metaLines = [`Lat: ${lat.toFixed(6)}`, `Lon: ${lon.toFixed(6)}`];
+  const metaLines = [
+    `Lat: ${lat.toFixed(6)}`,
+    `Lon: ${lon.toFixed(6)}`,
+  ];
   if (datetime) metaLines.unshift(`Time: ${escapeHtml(datetime)}`);
 
-  marker.bindPopup(`<div class="photo-popup"><div class="popup-meta">
-    <strong>${escapeHtml(filename)}</strong>
-    ${metaLines.join('<br>')}
-  </div></div>`, { maxWidth: 220 });
+  const content = `<div class="photo-popup">
+    <div class="popup-meta">
+      <strong>${escapeHtml(filename)}</strong>
+      ${metaLines.join('<br>')}
+    </div>
+  </div>`;
 
+  marker.bindPopup(content, { maxWidth: 220 });
   markerLayer.addLayer(marker);
   return marker;
 }
 
 function fitMapToPhotos() {
-  if (!photos.length) return;
+  if (photos.length === 0) return;
   const bounds = L.latLngBounds(photos.map(p => [p.lat, p.lon]));
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
 }
@@ -155,9 +181,31 @@ function addResultItem(filename, lat, lon, datetime, marker) {
       <div class="result-filename">${escapeHtml(filename)}</div>
       <div class="result-coords">${lat.toFixed(5)}, ${lon.toFixed(5)}</div>
       ${datetime ? `<div class="result-dt">${escapeHtml(datetime)}</div>` : ''}
-    </div>`;
-  li.addEventListener('click', () => { map.flyTo([lat, lon], 16); marker.openPopup(); });
+    </div>
+    <button class="remove-btn" title="Remove photo">×</button>
+  `;
+  li.querySelector('.remove-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    removeDemoPhoto(filename, marker, li);
+  });
+  li.addEventListener('click', () => {
+    map.flyTo([lat, lon], 16);
+    marker.openPopup();
+  });
   resultsList.appendChild(li);
+}
+
+function removeDemoPhoto(filename, marker, li) {
+  photos = photos.filter(p => p.filename !== filename);
+  markerLayer.removeLayer(marker);
+  li.remove();
+
+  if (photos.length === 0) {
+    resultsSec.style.display = 'none';
+    statusEl.textContent = 'All photos removed.';
+  } else {
+    statusEl.textContent = `${photos.length}/${MAX_PHOTOS} photos mapped.`;
+  }
 }
 
 
@@ -171,139 +219,20 @@ clearBtn.addEventListener('click', () => {
 });
 
 
-// ======== INLINE JPEG EXIF / GPS PARSER ========
-// Reads only the first 128 KB of the file (EXIF is always near the start).
-// Returns { lat, lon, datetime } or null.
-
-async function readJpegGps(file) {
-  try {
-    const buf  = await file.slice(0, 131072).arrayBuffer();
-    const view = new DataView(buf);
-
-    if (view.getUint16(0) !== 0xFFD8) return null; // not a JPEG
-
-    let pos = 2;
-    while (pos + 4 <= view.byteLength) {
-      const marker = view.getUint16(pos);
-      if (marker === 0xFFDA) break; // start of image data — stop
-
-      const segLen = view.getUint16(pos + 2); // includes the 2-byte length field
-
-      // APP1 with Exif signature
-      if (marker === 0xFFE1 && segLen > 10) {
-        const sig = readAscii(view, pos + 4, 4);
-        if (sig === 'Exif') {
-          // TIFF data starts after "Exif\0\0" (6 bytes after APP1 data start)
-          const result = parseTiff(view, pos + 10);
-          if (result) return result;
-        }
-      }
-
-      pos += 2 + segLen;
-    }
-  } catch (_) {}
-  return null;
-}
-
-function parseTiff(view, base) {
-  if (base + 8 > view.byteLength) return null;
-
-  const order = view.getUint16(base);
-  const le    = order === 0x4949; // 'II' = little-endian, 'MM' = big-endian
-
-  if (view.getUint16(base + 2, le) !== 42) return null; // TIFF magic
-
-  const ifd0Off = view.getUint32(base + 4, le);
-  const ifd0    = readIfd(view, base, ifd0Off, le);
-
-  // GPS IFD pointer
-  const gpsOff = ifd0[0x8825];
-  if (!gpsOff) return null;
-  const gps = readIfd(view, base, gpsOff, le);
-
-  const latRef = gps[0x01];
-  const latRaw = gps[0x02];
-  const lonRef = gps[0x03];
-  const lonRaw = gps[0x04];
-  if (!latRaw || !lonRaw) return null;
-
-  let lat = dmsToDecimal(latRaw);
-  let lon = dmsToDecimal(lonRaw);
-  if (latRef === 'S') lat = -lat;
-  if (lonRef === 'W') lon = -lon;
-
-  // DateTimeOriginal from Exif sub-IFD
-  let datetime = null;
-  const exifOff = ifd0[0x8769];
-  if (exifOff) {
-    const exif = readIfd(view, base, exifOff, le);
-    const raw  = exif[0x9003]; // DateTimeOriginal: "YYYY:MM:DD HH:MM:SS"
-    if (raw) datetime = raw.slice(0, 10).replace(/:/g, '-') + raw.slice(10);
-  }
-
-  return { lat, lon, datetime };
-}
-
-function readIfd(view, base, ifdOff, le) {
-  const tags  = {};
-  const start = base + ifdOff;
-  if (start + 2 > view.byteLength) return tags;
-
-  const count = view.getUint16(start, le);
-
-  for (let i = 0; i < count; i++) {
-    const e    = start + 2 + i * 12;
-    if (e + 12 > view.byteLength) break;
-
-    const tag  = view.getUint16(e, le);
-    const type = view.getUint16(e + 2, le);
-    const num  = view.getUint32(e + 4, le);
-    const fits = typeSz(type) * num <= 4;
-    const dOff = fits ? e + 8 : base + view.getUint32(e + 8, le);
-
-    if (type === 2) {
-      // ASCII string
-      tags[tag] = readAscii(view, dOff, num - 1);
-    } else if (type === 4 || type === 9) {
-      // LONG / SLONG — used for sub-IFD offsets
-      tags[tag] = view.getUint32(dOff, le);
-    } else if (type === 5) {
-      // UNSIGNED RATIONAL — GPS coordinates
-      const vals = [];
-      for (let j = 0; j < num; j++) {
-        const n = view.getUint32(dOff + j * 8,     le);
-        const d = view.getUint32(dOff + j * 8 + 4, le);
-        vals.push(d ? n / d : 0);
-      }
-      tags[tag] = vals;
-    }
-  }
-
-  return tags;
-}
-
-function typeSz(t) {
-  return { 1:1, 2:1, 3:2, 4:4, 5:8, 6:1, 7:1, 8:2, 9:4, 10:8, 11:4, 12:8 }[t] || 1;
-}
-
-function readAscii(view, off, len) {
-  let s = '';
-  for (let i = 0; i < len; i++) {
-    const c = view.getUint8(off + i);
-    if (!c) break;
-    s += String.fromCharCode(c);
-  }
-  return s;
-}
-
-function dmsToDecimal([deg, min, sec]) {
-  return deg + min / 60 + (sec || 0) / 3600;
-}
-
-
 // ======== UTILITIES ========
+function formatDatetime(dt) {
+  if (dt instanceof Date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ` +
+           `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  }
+  return String(dt);
+}
+
 function escapeHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

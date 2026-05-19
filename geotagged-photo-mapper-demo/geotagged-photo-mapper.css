@@ -25,18 +25,7 @@
 
 /* ── Result items: no thumb, text only ── */
 #results-list li {
-  align-items: flex-start;
-}
-
-/* ── Clear All button ── */
-#clear-btn {
-  background: #dc2626;
-  color: #fff;
-  margin-top: 4px;
-}
-
-#clear-btn:hover {
-  background: #b91c1c;
+  align-items: center;
 }
 
 /* ── Popup: no image, tighter padding ── */

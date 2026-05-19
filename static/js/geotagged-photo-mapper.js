@@ -22,11 +22,16 @@ L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
 
 
+// ======== STATE ========
+let mappedPhotos = []; // { filename, lat, lon, marker }
+
+
 // ======== FILE HANDLING ========
 const dropZone    = document.getElementById('drop-zone');
 const fileInput   = document.getElementById('file-input');
 const uploadBtn   = document.getElementById('upload-btn');
 const statusEl    = document.getElementById('status');
+const clearBtn    = document.getElementById('clear-btn');
 
 let selectedFiles = [];
 let photoURLs = new Map();
@@ -109,51 +114,59 @@ uploadBtn.addEventListener('click', async () => {
 // ======== PLOT GEOJSON ========
 function plotGeoJSON(geojson) {
   markerLayer.clearLayers();
+  mappedPhotos = [];
 
-  const layer = L.geoJSON(geojson, {
-    pointToLayer(feature, latlng) {
-      return L.circleMarker(latlng, {
-        radius: 8,
-        fillColor: '#00d2ff',
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 0.8,
-      });
-    },
-    onEachFeature(feature, layer) {
-      const p = feature.properties || {};
-      const imgUrl = photoURLs.get(p.filename);
+  const features = geojson.features || [];
+  features.forEach(feature => {
+    const p = feature.properties || {};
+    const coords = feature.geometry?.coordinates || [];
+    const lon = coords[0], lat = coords[1];
+    if (lat == null || lon == null) return;
 
-      const meta = [];
-      if (p.datetime)           meta.push(`Time: ${p.datetime}`);
-      if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
-      if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
-
-      const imgTag = imgUrl
-        ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
-        : '';
-
-      const hint = imgUrl ? `<div class="popup-hint">Click photo to zoom and pan</div>` : '';
-
-      const content = `<div class="photo-popup">
-        ${imgTag}
-        ${hint}
-        <div class="popup-meta">
-          <strong>${escapeHtml(p.filename || 'Unknown')}</strong>
-          ${meta.join('<br>')}
-        </div>
-      </div>`;
-
-      layer.bindPopup(content, { maxWidth: 240 });
-    },
+    const imgUrl = photoURLs.get(p.filename);
+    const marker = buildMarker(p, lat, lon, imgUrl);
+    markerLayer.addLayer(marker);
+    mappedPhotos.push({ filename: p.filename, lat, lon, marker });
   });
 
-  markerLayer.addLayer(layer);
-
   try {
-    const bounds = layer.getBounds();
-    if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
+    if (mappedPhotos.length > 0) {
+      const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
+    }
   } catch (_) {}
+}
+
+function buildMarker(p, lat, lon, imgUrl) {
+  const marker = L.circleMarker([lat, lon], {
+    radius: 8,
+    fillColor: '#00d2ff',
+    color: '#ffffff',
+    weight: 2,
+    fillOpacity: 0.8,
+  });
+
+  const meta = [];
+  if (p.datetime)           meta.push(`Time: ${p.datetime}`);
+  if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
+  if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
+
+  const imgTag = imgUrl
+    ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
+    : '';
+  const hint = imgUrl ? `<div class="popup-hint">Click photo to zoom and pan</div>` : '';
+
+  const content = `<div class="photo-popup">
+    ${imgTag}
+    ${hint}
+    <div class="popup-meta">
+      <strong>${escapeHtml(p.filename || 'Unknown')}</strong>
+      ${meta.join('<br>')}
+    </div>
+  </div>`;
+
+  marker.bindPopup(content, { maxWidth: 240 });
+  return marker;
 }
 
 
@@ -366,7 +379,7 @@ function populateResults(geojson) {
   const list = document.getElementById('results-list');
   list.innerHTML = '';
 
-  const features = (geojson.features || []);
+  const features = geojson.features || [];
   if (features.length === 0) return;
 
   features.forEach(feature => {
@@ -387,13 +400,46 @@ function populateResults(geojson) {
         <div class="result-filename">${escapeHtml(p.filename || 'Unknown')}</div>
         <div class="result-coords">${lat != null ? lat.toFixed(5) : '?'}, ${lon != null ? lon.toFixed(5) : '?'}</div>
       </div>
+      <button class="remove-btn" title="Remove photo">×</button>
     `;
+    li.querySelector('.remove-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      removePhoto(p.filename, li);
+    });
     li.addEventListener('click', () => {
       if (lat != null && lon != null) map.flyTo([lat, lon], 16);
     });
     list.appendChild(li);
   });
 }
+
+function removePhoto(filename, li) {
+  const idx = mappedPhotos.findIndex(ph => ph.filename === filename);
+  if (idx !== -1) {
+    markerLayer.removeLayer(mappedPhotos[idx].marker);
+    mappedPhotos.splice(idx, 1);
+  }
+  li.remove();
+
+  if (mappedPhotos.length === 0) {
+    document.getElementById('results-section').style.display = 'none';
+    document.getElementById('export-section').style.display = 'none';
+    document.getElementById('flight-details-section').style.display = 'none';
+    statusEl.textContent = 'All photos removed. Ready for new upload.';
+  }
+}
+
+
+// ======== CLEAR ALL ========
+clearBtn.addEventListener('click', () => {
+  mappedPhotos = [];
+  markerLayer.clearLayers();
+  document.getElementById('results-list').innerHTML = '';
+  document.getElementById('results-section').style.display = 'none';
+  document.getElementById('export-section').style.display = 'none';
+  document.getElementById('flight-details-section').style.display = 'none';
+  statusEl.textContent = 'Cleared. Ready for new upload.';
+});
 
 
 // ======== REFERENCE LAYERS ========
