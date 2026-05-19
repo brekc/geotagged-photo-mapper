@@ -151,6 +151,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 - CRS options:
   - Common: WGS 84 (EPSG:4326) and Web Mercator (EPSG:3857)
   - Region search: any projected CRS by state, province, or country, with a units toggle (meters/feet) and datum filter
+    (UTM zones will not appear here — their area-of-use is defined by longitude bands, not state or country names; use the UTM Zones map layer or the EPSG code field instead)
   - Manual EPSG code override
 - CSV coordinate columns use `longitude`/`latitude` for geographic CRS and `easting`/`northing` for projected CRS
 - Custom export filename
