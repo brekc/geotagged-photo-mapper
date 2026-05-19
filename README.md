@@ -6,7 +6,9 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 
 ## Browser Demo (GitHub Pages)
 
-A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs entirely in the browser — no Python, no server, no build tools. EXIF data is read locally via [exifr](https://github.com/MikeKovarik/exifr); photos never leave the device.
+A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs entirely in the browser — no Python, no server, no build tools. GPS coordinates are extracted from EXIF data using a built-in parser; photos never leave the device.
+
+**Live demo:** https://brekc.github.io/geotagged-photo-mapper/geotagged-photo-mapper-demo/
 
 **To deploy via GitHub Pages:**
 
