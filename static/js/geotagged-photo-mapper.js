@@ -402,7 +402,8 @@ function populateResults(geojson) {
 function setCrsForExport(epsg, name) {
   selectedEpsg = epsg;
   crsSelectedLabel.textContent = `Using: ${escapeHtml(name)} (EPSG:${epsg})`;
-  // Clear both CRS pickers so the label is the source of truth
+  document.getElementById('custom-epsg').value = epsg;
+  // Clear both CRS pickers so the EPSG field is the source of truth
   commonCrsSelect.value = '';
   regionSelect.value = '';
   crsOptionsSelect.innerHTML = '<option value="">-- Select a region first --</option>';
@@ -411,6 +412,11 @@ function setCrsForExport(epsg, name) {
   commonCrsSection.style.display = '';
   regionCrsSection.style.display = '';
   map.closePopup();
+
+  const exportSection = document.getElementById('export-section');
+  if (exportSection.style.display !== 'none') {
+    exportSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function zonePopupHtml(name, epsg, area) {
