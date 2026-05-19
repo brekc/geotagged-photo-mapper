@@ -433,18 +433,23 @@ function zonePopupHtml(name, epsg, area) {
 }
 
 // ── UTM Zones ──
-function buildUtmLayer() {
+function buildUtmLayer(datum) {
+  const useNad83 = datum === 'nad83';
   const features = [];
   for (let z = 1; z <= 60; z++) {
     const w = -180 + (z - 1) * 6, e = w + 6;
+    // NAD83 northern zones only exist for zones 1–23 (North America coverage)
+    const nad83Available = useNad83 && z <= 23;
+    const nEpsg = nad83Available ? 26900 + z : 32600 + z;
+    const nName = nad83Available ? `NAD83 / UTM Zone ${z}N` : `WGS 84 / UTM Zone ${z}N`;
     features.push({
       type: 'Feature',
-      properties: { name: `UTM Zone ${z}N`, epsg: 32600 + z, area: 'Northern Hemisphere' },
+      properties: { name: nName, epsg: nEpsg, area: 'Northern Hemisphere' },
       geometry: { type: 'Polygon', coordinates: [[[w,0],[e,0],[e,84],[w,84],[w,0]]] },
     });
     features.push({
       type: 'Feature',
-      properties: { name: `UTM Zone ${z}S`, epsg: 32700 + z, area: 'Southern Hemisphere' },
+      properties: { name: `WGS 84 / UTM Zone ${z}S`, epsg: 32700 + z, area: 'Southern Hemisphere' },
       geometry: { type: 'Polygon', coordinates: [[[w,-80],[e,-80],[e,0],[w,0],[w,-80]]] },
     });
   }
@@ -510,13 +515,24 @@ async function buildStatePlaneLayer() {
 
 let utmLayer = null;
 let spLayer  = null;
+let utmDatum = 'wgs84';
 
-document.getElementById('layer-utm').addEventListener('change', async function () {
+document.getElementById('layer-utm').addEventListener('change', function () {
   if (this.checked) {
-    if (!utmLayer) utmLayer = buildUtmLayer();
+    utmLayer = buildUtmLayer(utmDatum);
     utmLayer.addTo(map);
   } else if (utmLayer) {
     map.removeLayer(utmLayer);
+    utmLayer = null;
+  }
+});
+
+document.getElementById('utm-datum').addEventListener('change', function () {
+  utmDatum = this.value;
+  if (document.getElementById('layer-utm').checked) {
+    if (utmLayer) map.removeLayer(utmLayer);
+    utmLayer = buildUtmLayer(utmDatum);
+    utmLayer.addTo(map);
   }
 });
 
