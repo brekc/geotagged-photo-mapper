@@ -41,7 +41,7 @@ dropZone.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', () => {
   handleFiles(fileInput.files);
-  fileInput.value = ''; // allow re-selecting the same files
+  fileInput.value = '';
 });
 
 dropZone.addEventListener('dragover', e => {
@@ -123,7 +123,6 @@ async function handleFiles(fileList) {
     }
   }
 
-  // Build status message
   const parts = [];
   if (mapped > 0)    parts.push(`${mapped} photo${mapped !== 1 ? 's' : ''} mapped`);
   if (noGps > 0)     parts.push(`${noGps} had no GPS data`);
