@@ -33,7 +33,8 @@ const fileInput   = document.getElementById('file-input');
 const statusEl    = document.getElementById('status');
 const resultsSec  = document.getElementById('results-section');
 const resultsList = document.getElementById('results-list');
-const clearBtn    = document.getElementById('clear-btn');
+const clearBtn       = document.getElementById('clear-btn');
+const downloadCsvBtn = document.getElementById('download-csv-btn');
 
 
 // ======== FILE HANDLING ========
@@ -207,6 +208,28 @@ function removeDemoPhoto(filename, marker, li) {
     statusEl.textContent = `${photos.length}/${MAX_PHOTOS} photos mapped.`;
   }
 }
+
+
+// ======== DOWNLOAD CSV ========
+downloadCsvBtn.addEventListener('click', () => {
+  const header = 'filename,latitude,longitude,datetime';
+  const rows = photos.map(p =>
+    [
+      `"${p.filename.replace(/"/g, '""')}"`,
+      p.lat,
+      p.lon,
+      p.datetime ? `"${p.datetime}"` : '',
+    ].join(',')
+  );
+  const csv = [header, ...rows].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'photo_locations.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 
 // ======== CLEAR ALL ========
