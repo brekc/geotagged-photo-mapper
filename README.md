@@ -38,6 +38,7 @@ cd geotagged-photo-mapper
    - **Linux (Fedora/RHEL):** `sudo dnf install perl-Image-ExifTool`
    - **Linux (Arch):** `sudo pacman -S perl-image-exiftool`
    - **Windows** — pick one:
+
      Built into Windows 10/11
      ```bash
      winget install OliverBetz.ExifTool
