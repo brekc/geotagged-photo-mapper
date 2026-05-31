@@ -38,10 +38,17 @@ cd geotagged-photo-mapper
    - **Linux (Fedora/RHEL):** `sudo dnf install perl-Image-ExifTool`
    - **Linux (Arch):** `sudo pacman -S perl-image-exiftool`
    - **Windows** — pick one:
+     Built into Windows 10/11
+     ```bash
+     winget install OliverBetz.ExifTool
      ```
-     winget install OliverBetz.ExifTool   # built into Windows 10/11
-     choco install exiftool               # Chocolatey
-     scoop install exiftool               # Scoop
+     Chocolatey
+     ```bash
+     choco install exiftool
+     ```
+     Scoop
+     ```bash
+     scoop install exiftool
      ```
      Or manually: download the "Windows Executable" zip from [exiftool.org](https://exiftool.org), rename `exiftool(-k).exe` → `exiftool.exe`, and add it to your `PATH`.
 
