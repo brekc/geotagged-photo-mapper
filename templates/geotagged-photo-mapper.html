@@ -69,12 +69,12 @@
         <div>
           <label for="format-select">Format</label>
           <select id="format-select">
-            <option value="geojson">GeoJSON (.geojson)</option>
-            <option value="geopackage">GeoPackage (.gpkg)</option>
-            <option value="filegdb">File Geodatabase (.gdb)</option>
-            <option value="shapefile">Shapefile (.shp)</option>
-            <option value="kml">KML (.kml)</option>
             <option value="csv">CSV (.csv)</option>
+            <option value="filegdb">File Geodatabase (.gdb)</option>
+            <option value="geojson" selected>GeoJSON (.geojson)</option>
+            <option value="geopackage">GeoPackage (.gpkg)</option>
+            <option value="kml">KML (.kml)</option>
+            <option value="shapefile">Shapefile (.shp)</option>
           </select>
         </div>
 
@@ -82,7 +82,7 @@
           <label for="common-crs-select">Common CRS</label>
           <select id="common-crs-select">
             <option value="">-- Select --</option>
-            <option value="4326">WGS 84 — GPS / Lat-Lon (EPSG:4326)</option>
+            <option value="4326">WGS 84, GPS / Lat-Lon (EPSG:4326)</option>
             <option value="3857">Web Mercator (EPSG:3857)</option>
           </select>
         </div>
@@ -198,13 +198,23 @@
           </div>
         </div>
 
-        <div id="crs-selected-label">Using: WGS 84 — GPS / Lat-Lon (EPSG:4326)</div>
+        <div id="crs-selected-label">Using: WGS 84, GPS / Lat-Lon (EPSG:4326)</div>
 
         <div>
           <label for="custom-epsg">EPSG Code</label>
           <input id="custom-epsg" type="text" placeholder="e.g. 26910">
           <div style="font-size:13px; color:#475569; margin-top:4px;">
             Note: entering an EPSG code here will override the region CRS selection above.
+          </div>
+        </div>
+
+        <div>
+          <label for="custom-crs-input">Custom CRS <span style="font-weight:400; color:#64748b;">(optional)</span></label>
+          <textarea id="custom-crs-input" rows="3"
+            placeholder="Paste a WKT or PROJ4 string for a project-specific datum or projection"></textarea>
+          <input id="custom-crs-file" type="file" accept=".prj,.wkt,.txt">
+          <div style="font-size:13px; color:#475569; margin-top:4px;">
+            Uploading a .prj file fills in the field above. If either is filled in, it overrides the EPSG code above.
           </div>
         </div>
 
@@ -218,7 +228,7 @@
           <label for="export-name">Export Filename</label>
           <input id="export-name" type="text" placeholder="photo_locations">
           <div style="font-size:13px; color:#475569; margin-top:4px;">
-            No extension needed — it will be added automatically.
+            No extension needed. It will be added automatically.
           </div>
         </div>
 

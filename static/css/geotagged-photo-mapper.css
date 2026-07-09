@@ -140,7 +140,7 @@ button {
 #export-section { display: none; }
 
 /* ── Form controls ── */
-select, input[type="text"], input[type="number"] {
+select, input[type="text"], input[type="number"], textarea {
   width: 100%;
   background: #f8fafc;
   border: 1px solid #cbd5e1;
@@ -152,8 +152,20 @@ select, input[type="text"], input[type="number"] {
   transition: border-color 0.15s;
 }
 
-select:focus, input[type="text"]:focus, input[type="number"]:focus {
+textarea {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  resize: vertical;
+}
+
+select:focus, input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
   border-color: #0284c7;
+}
+
+input[type="file"] {
+  width: 100%;
+  font-size: 13px;
+  color: #475569;
+  margin-top: 6px;
 }
 
 select option { background: #f8fafc; }

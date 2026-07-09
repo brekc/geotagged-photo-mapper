@@ -1,6 +1,9 @@
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
 
+// Three basemap choices, switchable from the layers control in the top
+// right of the map. OpenStreetMap is the default; the other two are just
+// alternate tile sources for imagery or a lighter visual style.
 const basemaps = {
   'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -19,10 +22,14 @@ const basemaps = {
 basemaps['OpenStreetMap'].addTo(map);
 L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 
+// Photo markers live in their own layer group so they can all be cleared at
+// once (on re-upload or Clear All) without touching the reference layers.
 const markerLayer = L.layerGroup().addTo(map);
 
 
 // ======== STATE ========
+// One entry per photo currently on the map, so the results list and the
+// remove/clear buttons can find and remove the matching marker.
 let mappedPhotos = []; // { filename, lat, lon, marker }
 
 
@@ -34,9 +41,14 @@ const statusEl    = document.getElementById('status');
 const clearBtn    = document.getElementById('clear-btn');
 
 let selectedFiles = [];
+// Maps filename -> a local blob URL for that file, so photo popups and the
+// results list can show thumbnails without re-reading the file or sending
+// it anywhere. These files never leave the browser until Upload is clicked.
 let photoURLs = new Map();
 
 function setFiles(files) {
+  // Revoke previous object URLs before replacing them, otherwise each new
+  // selection would leak the URLs from the last one for the life of the tab.
   photoURLs.forEach(url => URL.revokeObjectURL(url));
   photoURLs = new Map();
 
@@ -54,6 +66,8 @@ function setFiles(files) {
   }
 }
 
+// Clicking anywhere in the drop zone opens the native file picker, since the
+// visible <div> isn't itself a form control.
 dropZone.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', () => setFiles(fileInput.files));
@@ -98,6 +112,8 @@ uploadBtn.addEventListener('click', async () => {
     plotGeoJSON(geojson);
     populateResults(geojson);
 
+    // The Export / Flight Details / Results sections stay hidden until there's
+    // at least one geotagged photo to act on.
     if (total_geotagged > 0) {
       document.getElementById('export-section').style.display = 'flex';
       document.getElementById('flight-details-section').style.display = 'flex';
@@ -129,6 +145,9 @@ function plotGeoJSON(geojson) {
     mappedPhotos.push({ filename: p.filename, lat, lon, marker });
   });
 
+  // Zoom/pan the map to fit every plotted photo, ignoring the case where
+  // fitBounds is called on an empty or invalid bounds (e.g. right after a
+  // Clear All).
   try {
     if (mappedPhotos.length > 0) {
       const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
@@ -151,6 +170,9 @@ function buildMarker(p, lat, lon, imgUrl) {
   if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
   if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
 
+  // Only show a thumbnail if we still have this photo's local blob URL
+  // (photoURLs is cleared on a fresh file selection, so it's possible to
+  // have marker data without a matching image if the user re-selected files).
   const imgTag = imgUrl
     ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
     : '';
@@ -179,12 +201,17 @@ const commonCrsSection  = document.getElementById('common-crs-section');
 const regionCrsSection  = document.getElementById('region-crs-section');
 const crsFilterControls = document.getElementById('crs-filter-controls');
 const showAllDatumsChk  = document.getElementById('show-all-datums');
+const customCrsInput    = document.getElementById('custom-crs-input');
+const customCrsFile     = document.getElementById('custom-crs-file');
 
-let selectedEpsg  = 4326;
-let allCrsResults = [];   // full unfiltered list for current region
+let selectedEpsg  = 4326; // default: WGS 84, matches the label below
+let allCrsResults = [];   // full unfiltered list of CRS results for the current region
 let activeUnits   = 'meters';
 
-// Datum priority — lower number = newer/preferred (null = non-US, always keep)
+// Datum priority: lower number = newer/preferred (null = non-US, always keep).
+// Used by the "latest-datum filter" below to collapse a zone's older datum
+// realizations (HARN, plain NAD83, etc.) down to just the newest one, unless
+// the user checks "Show all datum realizations".
 const DATUM_PRIORITY = {
   'NAD83(2011)': 1, 'NAD83(2011)(IERS)': 1,
   'NAD83(NSRS2007)': 2, 'NAD83(PA11)': 2, 'NAD83(MA11)': 2,
@@ -194,6 +221,10 @@ const DATUM_PRIORITY = {
 };
 
 function parseCrs(name) {
+  // CRS names from pyproj look like "NAD83(2011) / Washington North (ftUS)".
+  // Split on " / " to separate the datum from the zone name, and pull the
+  // optional feet marker off the end of the zone name so zones can be
+  // grouped by their base name regardless of units or datum.
   const slash = name.indexOf(' / ');
   const datum = slash >= 0 ? name.slice(0, slash) : '';
   const zone  = slash >= 0 ? name.slice(slash + 3) : name;
@@ -204,7 +235,8 @@ function parseCrs(name) {
 }
 
 function applyFilters(list) {
-  // 1 — units filter
+  // 1. units filter: keep only meters, only feet, or everything, depending
+  // on which toggle button is active.
   let filtered = list.filter(r => {
     const { isFeet } = parseCrs(r.name);
     if (activeUnits === 'meters') return !isFeet;
@@ -212,9 +244,12 @@ function applyFilters(list) {
     return true;
   });
 
-  // 2 — latest-datum filter (skip if "show all" is checked)
+  // 2. latest-datum filter (skip if "show all" is checked): for each
+  // base zone name + units combination, keep only the entry with the best
+  // (lowest) datum priority. Non-US zones have no datum priority mapping
+  // and are always kept as-is.
   if (!showAllDatumsChk.checked) {
-    const best = new Map(); // key: "baseZone|isFeet" -> best entry
+    const best = new Map(); // key: "baseZone|isFeet" -> best entry so far
     const nonUs = [];
     for (const r of filtered) {
       const { baseZone, isFeet, datumPriority } = parseCrs(r.name);
@@ -245,7 +280,7 @@ function renderCrsOptions() {
   crsOptionsSelect.disabled = false;
 }
 
-// Units toggle
+// Units toggle (Meters / Both / Feet buttons above the region CRS results).
 document.querySelectorAll('.toggle-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
@@ -260,13 +295,18 @@ showAllDatumsChk.addEventListener('change', renderCrsOptions);
 commonCrsSelect.addEventListener('change', () => {
   const code = parseInt(commonCrsSelect.value, 10);
   if (!code) {
+    // "-- Select --" was chosen again: fall back to letting the region
+    // picker be used instead.
     regionCrsSection.style.display = '';
     return;
   }
   const label = commonCrsSelect.options[commonCrsSelect.selectedIndex].text;
   selectedEpsg = code;
   crsSelectedLabel.textContent = `Using: ${label}`;
+  // Picking a common CRS resets the region picker and any custom CRS text,
+  // since only one CRS source should be "active" at a time.
   regionSelect.value = '';
+  clearCustomCrs();
   allCrsResults = [];
   crsOptionsSelect.innerHTML = '<option value="">-- Select a region first --</option>';
   crsOptionsSelect.disabled = true;
@@ -286,6 +326,8 @@ regionSelect.addEventListener('change', async () => {
     return;
   }
 
+  // Picking a region resets the common CRS picker, mirroring the reset that
+  // commonCrsSelect does above.
   commonCrsSelect.value = '';
   commonCrsSection.style.display = 'none';
   crsOptionsSelect.innerHTML = '<option value="">Loading...</option>';
@@ -315,28 +357,91 @@ crsOptionsSelect.addEventListener('change', () => {
   const label = crsOptionsSelect.options[crsOptionsSelect.selectedIndex].text;
   selectedEpsg = code;
   crsSelectedLabel.textContent = `Using: ${label}`;
+  // Picking a region CRS is also a definitive choice, so any leftover
+  // custom CRS text must not silently win at export time.
+  clearCustomCrs();
 });
+
+// ── Custom CRS (paste WKT/PROJ4, or upload a .prj file) ──
+// This is the highest-priority CRS source: if the textarea has anything in
+// it at download time, it overrides the EPSG field, which in turn overrides
+// the region/common pickers (see the download handler below). Because it's
+// the highest priority, every other way of picking a CRS (common, region,
+// manual EPSG, map-popup zone click) must clear it via clearCustomCrs(),
+// or the export would silently keep using the abandoned custom CRS.
+function clearCustomCrs() {
+  customCrsInput.value = '';
+  customCrsFile.value = '';
+}
+
+customCrsFile.addEventListener('change', () => {
+  const file = customCrsFile.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    customCrsInput.value = String(reader.result || '').trim();
+    updateCustomCrsLabel();
+  };
+  reader.onerror = () => {
+    alert(`Could not read ${file.name}. Try pasting its contents into the text field instead.`);
+  };
+  reader.readAsText(file);
+});
+
+customCrsInput.addEventListener('input', updateCustomCrsLabel);
+
+// A manually typed EPSG code is also a definitive CRS choice.
+document.getElementById('custom-epsg').addEventListener('input', function () {
+  if (this.value.trim() !== '') {
+    customCrsInput.value = '';
+    customCrsFile.value = '';
+  }
+});
+
+function updateCustomCrsLabel() {
+  const text = customCrsInput.value.trim();
+  if (text) {
+    crsSelectedLabel.textContent = 'Using: Custom CRS (pasted/uploaded)';
+    return;
+  }
+  // Textarea was cleared: fall back to whatever EPSG is currently selected,
+  // so the label doesn't keep claiming a custom CRS is active once it isn't.
+  crsSelectedLabel.textContent = `Using: EPSG:${currentEpsgValue()}`;
+}
+
+// The effective EPSG at any moment: the manual field if the user typed one,
+// otherwise whatever the common/region/zone pickers last set. Shared by the
+// label update above and the download handler below so the two can't drift.
+function currentEpsgValue() {
+  const customEpsg = document.getElementById('custom-epsg').value.trim();
+  return customEpsg !== '' ? customEpsg : String(selectedEpsg);
+}
 
 
 // ======== EXPORT / DOWNLOAD ========
+// File extension for each export format, alphabetized to match the
+// format-select dropdown and the backend's /export format handlers.
 const FORMAT_EXT = {
+  csv:        f => `${f}.csv`,
+  filegdb:    f => `${f}.zip`,
   geojson:    f => `${f}.geojson`,
   geopackage: f => `${f}.gpkg`,
-  filegdb:    f => `${f}.zip`,
-  shapefile:  f => `${f}.zip`,
   kml:        f => `${f}.kml`,
-  csv:        f => `${f}.csv`,
+  shapefile:  f => `${f}.zip`,
 };
 
 document.getElementById('download-btn').addEventListener('click', async (e) => {
   const format     = document.getElementById('format-select').value;
-  const customEpsg = document.getElementById('custom-epsg').value.trim();
-  const epsg       = customEpsg !== '' ? customEpsg : String(selectedEpsg);
+  const epsg       = currentEpsgValue();
+  const customCrs  = customCrsInput.value.trim();
   const baseName   = document.getElementById('export-name').value.trim().replace(/[\\/:*?"<>|]/g, '_') || 'photo_locations';
 
   const formData = new FormData();
   formData.append('format', format);
   formData.append('epsg', epsg);
+  // Only sent when non-empty; the backend treats a present, non-empty
+  // custom_crs as taking priority over the epsg field above.
+  if (customCrs) formData.append('custom_crs', customCrs);
   formData.append('source_path', document.getElementById('source-path').value.trim());
   formData.append('flight_altitude', document.getElementById('flight-altitude').value.trim());
   formData.append('altitude_unit', document.getElementById('altitude-unit').value);
@@ -356,6 +461,9 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
 
     const filename = (FORMAT_EXT[format] || (f => `${f}.${format}`))(baseName);
 
+    // Downloads are triggered by creating a throwaway <a download> link
+    // rather than navigating the page, since the export arrives as a blob
+    // in the fetch response, not a URL the browser can navigate to directly.
     const blob = await res.blob();
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -421,6 +529,8 @@ function removePhoto(filename, li) {
   }
   li.remove();
 
+  // Once the last photo is removed, hide the sections that only make sense
+  // when there's data to show or export.
   if (mappedPhotos.length === 0) {
     document.getElementById('results-section').style.display = 'none';
     document.getElementById('export-section').style.display = 'none';
@@ -444,14 +554,18 @@ clearBtn.addEventListener('click', () => {
 
 // ======== REFERENCE LAYERS ========
 
-// Shared popup: click "Use for export" to set CRS directly from the map
+// Shared popup body for both reference layers (UTM and State Plane): click
+// "Use for export" to set that zone's CRS directly from the map, instead of
+// hunting for it in the region search.
 function setCrsForExport(epsg, name) {
   selectedEpsg = epsg;
   crsSelectedLabel.textContent = `Using: ${escapeHtml(name)} (EPSG:${epsg})`;
   document.getElementById('custom-epsg').value = epsg;
-  // Clear both CRS pickers so the EPSG field is the source of truth
+  // Clear both CRS pickers (and any custom CRS text) so the EPSG field is
+  // the single source of truth for what's about to be exported.
   commonCrsSelect.value = '';
   regionSelect.value = '';
+  clearCustomCrs();
   crsOptionsSelect.innerHTML = '<option value="">-- Select a region first --</option>';
   crsOptionsSelect.disabled = true;
   crsFilterControls.style.display = 'none';
@@ -479,12 +593,16 @@ function zonePopupHtml(name, epsg, area) {
 }
 
 // ── UTM Zones ──
+// Generated entirely on the client: every UTM zone is a simple 6-degree-wide
+// rectangle by definition, so there's no need to fetch this from the server
+// the way State Plane zones are (those have irregular, county-based borders).
 function buildUtmLayer(datum) {
   const useNad83 = datum === 'nad83';
   const features = [];
   for (let z = 1; z <= 60; z++) {
     const w = -180 + (z - 1) * 6, e = w + 6;
-    // NAD83 northern zones only exist for zones 1–23 (North America coverage)
+    // NAD83 northern zones only exist for zones 1-23 (North America coverage);
+    // higher zones and all southern-hemisphere zones fall back to WGS 84.
     const nad83Available = useNad83 && z <= 23;
     const nEpsg = nad83Available ? 26900 + z : 32600 + z;
     const nName = nad83Available ? `NAD83 / UTM Zone ${z}N` : `WGS 84 / UTM Zone ${z}N`;
@@ -511,7 +629,7 @@ function buildUtmLayer(datum) {
 }
 
 // ── US State Plane Zones ──
-const SP_LABEL_ZOOM = 6; // show permanent labels at or above this zoom
+const SP_LABEL_ZOOM = 6; // show permanent (always-on) labels at or above this zoom level
 
 async function buildStatePlaneLayer() {
   const res  = await fetch('/zone-geojson?type=state_plane');
@@ -524,7 +642,9 @@ async function buildStatePlaneLayer() {
     },
     onEachFeature(f, lyr) {
       const p = f.properties;
-      // Short label: strip datum prefix (everything before " / ")
+      // Short label: strip the datum prefix (everything before " / ") so
+      // the on-map tooltip reads "Washington North" instead of the full
+      // "NAD83(2011) / Washington North".
       const shortName = p.name.includes(' / ') ? p.name.split(' / ')[1] : p.name;
       lyr.bindTooltip(shortName, {
         permanent: false, direction: 'center',
@@ -542,7 +662,9 @@ async function buildStatePlaneLayer() {
     },
   });
 
-  // Switch tooltips between hover-only and permanent based on zoom
+  // Below SP_LABEL_ZOOM, labels only show on hover (there isn't room for all
+  // of them at once); at or above it, every zone gets a permanent label
+  // since there's enough screen space per zone to read them.
   function updateLabels() {
     const permanent = map.getZoom() >= SP_LABEL_ZOOM;
     layer.eachLayer(lyr => {
@@ -575,6 +697,8 @@ document.getElementById('layer-utm').addEventListener('change', function () {
 
 document.getElementById('utm-datum').addEventListener('change', function () {
   utmDatum = this.value;
+  // Rebuild (rather than mutate) the layer, since the datum choice changes
+  // every zone's EPSG code and name, not just its style.
   if (document.getElementById('layer-utm').checked) {
     if (utmLayer) map.removeLayer(utmLayer);
     utmLayer = buildUtmLayer(utmDatum);
@@ -584,6 +708,8 @@ document.getElementById('utm-datum').addEventListener('change', function () {
 
 document.getElementById('layer-sp').addEventListener('change', async function () {
   if (this.checked) {
+    // Fetched once and cached in spLayer; toggling off and back on just
+    // re-adds the existing layer instead of re-fetching from the server.
     if (!spLayer) spLayer = await buildStatePlaneLayer();
     spLayer.addTo(map);
   } else if (spLayer) {
@@ -598,6 +724,8 @@ const lightboxStage = document.getElementById('lightbox-stage');
 const lightboxImg   = document.getElementById('lightbox-img');
 const lightboxClose = document.getElementById('lightbox-close');
 
+// Pan/zoom state for the lightbox image: scale plus x/y translation, and a
+// separate set of variables to track an in-progress drag.
 let lbScale = 1, lbTx = 0, lbTy = 0;
 let lbDragging = false, lbDragStartX = 0, lbDragStartY = 0, lbDragTx = 0, lbDragTy = 0;
 
@@ -623,6 +751,9 @@ lightboxClose.addEventListener('click', e => {
   closeLightbox();
 });
 
+// Clicking the dark backdrop closes the lightbox, but clicking the image
+// itself must not (that's how dragging starts), which is why this checks
+// that the click target is the stage element and not something inside it.
 lightboxStage.addEventListener('click', e => {
   if (e.target === lightboxStage) closeLightbox();
 });
@@ -653,6 +784,8 @@ lightboxImg.addEventListener('mousedown', e => {
   lightboxImg.classList.add('dragging');
 });
 
+// Drag tracking lives on `document`, not the image, so the drag continues
+// smoothly even if the cursor briefly leaves the image while moving fast.
 document.addEventListener('mousemove', e => {
   if (!lbDragging) return;
   lbTx = lbDragTx + (e.clientX - lbDragStartX);
@@ -668,6 +801,11 @@ document.addEventListener('mouseup', () => {
 
 
 // ======== SOURCE PATH AUTO-SLASH ========
+// Once the user tabs/clicks away from the Photo Source field, make sure it
+// ends in a separator so the backend can safely concatenate it with each
+// filename. The separator style (\ vs /) is inferred from whatever the user
+// already typed, so a Windows path keeps its backslashes and a URL/Unix
+// path keeps its forward slashes.
 document.getElementById('source-path').addEventListener('blur', function () {
   const val = this.value.trim();
   if (!val) { this.value = ''; return; }
