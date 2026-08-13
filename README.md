@@ -142,7 +142,7 @@ The server exposes four data endpoints:
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns UTM or US State Plane zone polygons for the reference layer toggles. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
 
-### Frontend (Vanilla JS / Leaflet.js)
+### Frontend (JavaScript / Leaflet.js)
 
 A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
