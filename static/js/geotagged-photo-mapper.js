@@ -34,11 +34,11 @@ let mappedPhotos = []; // { filename, lat, lon, marker }
 
 
 // ======== FILE HANDLING ========
-const dropZone    = document.getElementById('drop-zone');
-const fileInput   = document.getElementById('file-input');
-const uploadBtn   = document.getElementById('upload-btn');
-const statusEl    = document.getElementById('status');
-const clearBtn    = document.getElementById('clear-btn');
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const uploadBtn = document.getElementById('upload-btn');
+const statusEl = document.getElementById('status');
+const clearBtn = document.getElementById('clear-btn');
 
 let selectedFiles = [];
 // Maps filename -> a local blob URL for that file, so photo popups and the
@@ -193,20 +193,20 @@ function buildMarker(p, lat, lon, imgUrl) {
 
 
 // ======== CRS SELECTION ========
-const regionSelect      = document.getElementById('region-select');
-const crsOptionsSelect  = document.getElementById('crs-options-select');
-const crsSelectedLabel  = document.getElementById('crs-selected-label');
-const commonCrsSelect   = document.getElementById('common-crs-select');
-const commonCrsSection  = document.getElementById('common-crs-section');
-const regionCrsSection  = document.getElementById('region-crs-section');
+const regionSelect = document.getElementById('region-select');
+const crsOptionsSelect = document.getElementById('crs-options-select');
+const crsSelectedLabel = document.getElementById('crs-selected-label');
+const commonCrsSelect = document.getElementById('common-crs-select');
+const commonCrsSection = document.getElementById('common-crs-section');
+const regionCrsSection = document.getElementById('region-crs-section');
 const crsFilterControls = document.getElementById('crs-filter-controls');
-const showAllDatumsChk  = document.getElementById('show-all-datums');
-const customCrsInput    = document.getElementById('custom-crs-input');
-const customCrsFile     = document.getElementById('custom-crs-file');
+const showAllDatumsChk = document.getElementById('show-all-datums');
+const customCrsInput = document.getElementById('custom-crs-input');
+const customCrsFile = document.getElementById('custom-crs-file');
 
-let selectedEpsg  = 4326; // default: WGS 84, matches the label below
+let selectedEpsg = 4326; // default: WGS 84, matches the label below
 let allCrsResults = [];   // full unfiltered list of CRS results for the current region
-let activeUnits   = 'meters';
+let activeUnits = 'meters';
 
 // Datum priority: lower number = newer/preferred (null = non-US, always keep).
 // Used by the "latest-datum filter" below to collapse a zone's older datum
@@ -227,7 +227,7 @@ function parseCrs(name) {
   // grouped by their base name regardless of units or datum.
   const slash = name.indexOf(' / ');
   const datum = slash >= 0 ? name.slice(0, slash) : '';
-  const zone  = slash >= 0 ? name.slice(slash + 3) : name;
+  const zone = slash >= 0 ? name.slice(slash + 3) : name;
   const isFeet = /\(ft(?:US)?\)/i.test(zone);
   const baseZone = zone.replace(/\s*\(ft(?:US)?\)/i, '').trim();
   const datumPriority = datum in DATUM_PRIORITY ? DATUM_PRIORITY[datum] : null;
@@ -335,7 +335,7 @@ regionSelect.addEventListener('change', async () => {
   crsFilterControls.style.display = 'none';
 
   try {
-    const res  = await fetch(`/crs-search?q=${encodeURIComponent(region)}`);
+    const res = await fetch(`/crs-search?q=${encodeURIComponent(region)}`);
     const data = await res.json();
 
     if (!res.ok || !Array.isArray(data) || data.length === 0) {
@@ -431,10 +431,10 @@ const FORMAT_EXT = {
 };
 
 document.getElementById('download-btn').addEventListener('click', async (e) => {
-  const format     = document.getElementById('format-select').value;
-  const epsg       = currentEpsgValue();
-  const customCrs  = customCrsInput.value.trim();
-  const baseName   = document.getElementById('export-name').value.trim().replace(/[\\/:*?"<>|]/g, '_') || 'photo_locations';
+  const format = document.getElementById('format-select').value;
+  const epsg = currentEpsgValue();
+  const customCrs = customCrsInput.value.trim();
+  const baseName = document.getElementById('export-name').value.trim().replace(/[\\/:*?"<>|]/g, '_') || 'photo_locations';
 
   const formData = new FormData();
   formData.append('format', format);
@@ -465,9 +465,9 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
     // rather than navigating the page, since the export arrives as a blob
     // in the fetch response, not a URL the browser can navigate to directly.
     const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
@@ -491,9 +491,9 @@ function populateResults(geojson) {
   if (features.length === 0) return;
 
   features.forEach(feature => {
-    const p      = feature.properties || {};
+    const p = feature.properties || {};
     const coords = feature.geometry?.coordinates || [];
-    const lon    = coords[0], lat = coords[1];
+    const lon = coords[0], lat = coords[1];
     const imgUrl = photoURLs.get(p.filename);
 
     const li = document.createElement('li');
@@ -632,7 +632,7 @@ function buildUtmLayer(datum) {
 const SP_LABEL_ZOOM = 6; // show permanent (always-on) labels at or above this zoom level
 
 async function buildStatePlaneLayer() {
-  const res  = await fetch('/zone-geojson?type=state_plane');
+  const res = await fetch('/zone-geojson?type=state_plane');
   const data = await res.json();
 
   const layer = L.geoJSON(data, {
@@ -682,7 +682,7 @@ async function buildStatePlaneLayer() {
 }
 
 let utmLayer = null;
-let spLayer  = null;
+let spLayer = null;
 let utmDatum = 'wgs84';
 
 document.getElementById('layer-utm').addEventListener('change', function () {
@@ -719,9 +719,9 @@ document.getElementById('layer-sp').addEventListener('change', async function ()
 
 
 // ======== LIGHTBOX ========
-const lightbox      = document.getElementById('lightbox');
+const lightbox = document.getElementById('lightbox');
 const lightboxStage = document.getElementById('lightbox-stage');
-const lightboxImg   = document.getElementById('lightbox-img');
+const lightboxImg = document.getElementById('lightbox-img');
 const lightboxClose = document.getElementById('lightbox-close');
 
 // Pan/zoom state for the lightbox image: scale plus x/y translation, and a

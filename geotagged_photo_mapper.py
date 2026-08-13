@@ -14,29 +14,33 @@ export, and the State Plane zone cache described below.
 """
 
 import io
+import json
 import os
 import re
+import shutil
+import tempfile
 import urllib.request
 import warnings
-warnings.filterwarnings("ignore", message="pyproj unable to set PROJ database path")
-import json
-import tempfile
 import zipfile
-import shutil
 from typing import List
 
 import pandas as pd
-
-import geopandas as gpd
-from fastapi import FastAPI, UploadFile, File, Form, Query, Request, HTTPException
+from exiftool import ExifToolHelper
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from exiftool import ExifToolHelper
 from shapely.geometry import Point
-from pyproj import CRS
-from pyproj.database import query_crs_info
-from pyproj.enums import PJType
+
+# geopandas/pyproj emit this warning as a side effect of import, so the
+# filter has to be in place before they're imported rather than at the
+# top of the file with the rest of the warnings/logging setup.
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", message="pyproj unable to set PROJ database path")
+    import geopandas as gpd
+    from pyproj import CRS
+    from pyproj.database import query_crs_info
+    from pyproj.enums import PJType
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -61,8 +65,8 @@ try:
 except Exception:
     _ALL_PROJECTED_CRS = []
 
-_DATA_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-_SP_CSV_URL   = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_plane_reference.csv'
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+_SP_CSV_URL = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_plane_reference.csv'
 _COUNTIES_URL = 'https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_20m.zip'
 _sp_zones_cache: dict | None = None
 
@@ -443,7 +447,6 @@ async def export(
     else:
         raise HTTPException(status_code=400, detail='No EPSG code or custom CRS provided')
 
-    global cached_features
     if not cached_features:
         raise HTTPException(status_code=400, detail='No data to export, upload photos first')
 
@@ -477,11 +480,11 @@ async def export(
         # downstream consumers of the export don't need to know which unit
         # the user originally typed in.
         if altitude_unit == 'meters':
-            gdf['flight_alt_m']  = round(alt_val, 1)
+            gdf['flight_alt_m'] = round(alt_val, 1)
             gdf['flight_alt_ft'] = round(alt_val / 0.3048, 1)
         else:
             gdf['flight_alt_ft'] = round(alt_val, 1)
-            gdf['flight_alt_m']  = round(alt_val * 0.3048, 1)
+            gdf['flight_alt_m'] = round(alt_val * 0.3048, 1)
 
     gdf = gdf.to_crs(target_crs)
 
@@ -497,9 +500,9 @@ async def export(
             # would be a misleading label for coordinates in meters or feet.
             if target_crs.is_geographic:
                 csv_gdf['longitude'] = csv_gdf.geometry.x
-                csv_gdf['latitude']  = csv_gdf.geometry.y
+                csv_gdf['latitude'] = csv_gdf.geometry.y
             else:
-                csv_gdf['easting']  = csv_gdf.geometry.x
+                csv_gdf['easting'] = csv_gdf.geometry.x
                 csv_gdf['northing'] = csv_gdf.geometry.y
             csv_gdf = csv_gdf.drop(columns='geometry')
             buf = io.StringIO()

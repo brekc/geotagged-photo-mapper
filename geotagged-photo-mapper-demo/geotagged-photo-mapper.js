@@ -28,12 +28,12 @@ let photos = []; // { filename, lat, lon, datetime, marker }
 
 
 // ======== DOM REFS ========
-const dropZone    = document.getElementById('drop-zone');
-const fileInput   = document.getElementById('file-input');
-const statusEl    = document.getElementById('status');
-const resultsSec  = document.getElementById('results-section');
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const statusEl = document.getElementById('status');
+const resultsSec = document.getElementById('results-section');
 const resultsList = document.getElementById('results-list');
-const clearBtn       = document.getElementById('clear-btn');
+const clearBtn = document.getElementById('clear-btn');
 const downloadCsvBtn = document.getElementById('download-csv-btn');
 
 
@@ -97,7 +97,7 @@ async function handleFiles(fileList) {
   statusEl.textContent = `Reading EXIF from ${toProcess.length} photo${toProcess.length !== 1 ? 's' : ''}…`;
 
   let mapped = 0;
-  let noGps  = 0;
+  let noGps = 0;
 
   for (const file of toProcess) {
     try {
@@ -111,8 +111,8 @@ async function handleFiles(fileList) {
         continue;
       }
 
-      const lat      = gps.latitude;
-      const lon      = gps.longitude;
+      const lat = gps.latitude;
+      const lon = gps.longitude;
       const datetime = meta?.DateTimeOriginal ? formatDatetime(meta.DateTimeOriginal) : null;
 
       const marker = addMarker(file.name, lat, lon, datetime);
