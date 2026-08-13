@@ -264,7 +264,10 @@
 <div id="lightbox">
   <button id="lightbox-close">Close</button>
   <div id="lightbox-stage">
-    <img id="lightbox-img" src="" alt="Full size photo">
+    <!-- No src by default: an empty src="" can make some browsers
+         re-request the current page as an "image". JS sets .src before
+         this is ever shown (see openLightbox in geotagged-photo-mapper.js). -->
+    <img id="lightbox-img" alt="Full size photo">
   </div>
   <div id="lightbox-hint">Scroll to zoom &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Double-click to reset</div>
 </div>

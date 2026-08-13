@@ -1,3 +1,8 @@
+/* exported openLightbox, setCrsForExport */
+// openLightbox and setCrsForExport are called from onclick="" attributes in
+// HTML strings this file builds itself (photo popups and zone popups), not
+// from anywhere a linter can see, hence the "exported" directive above.
+
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
 
@@ -153,7 +158,10 @@ function plotGeoJSON(geojson) {
       const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
     }
-  } catch (_) {}
+  } catch (_) {
+    // Ignored: an invalid-bounds error here just means there was nothing
+    // valid to fit to, which is fine.
+  }
 }
 
 function buildMarker(p, lat, lon, imgUrl) {
@@ -445,6 +453,12 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   formData.append('source_path', document.getElementById('source-path').value.trim());
   formData.append('flight_altitude', document.getElementById('flight-altitude').value.trim());
   formData.append('altitude_unit', document.getElementById('altitude-unit').value);
+  // The backend uses this to name the file/layer *inside* multi-file
+  // formats (FileGDB directory + layer name, GeoPackage layer, Shapefile
+  // component files) — the client-side rename below only renames the
+  // outer downloaded blob, which a zipped or multi-layer format's insides
+  // don't see.
+  formData.append('export_name', baseName);
 
   const dlBtn = e.currentTarget;
   dlBtn.disabled = true;
@@ -738,7 +752,9 @@ function openLightbox(src) {
 
 function closeLightbox() {
   lightbox.style.display = 'none';
-  lightboxImg.src = '';
+  // removeAttribute rather than src = '': an empty string src can make some
+  // browsers re-request the current page as an "image".
+  lightboxImg.removeAttribute('src');
   lbDragging = false;
 }
 

@@ -43,7 +43,7 @@
 }
 
 /* ── Mobile layout ── */
-@media (max-width: 768px) {
+@media (width <= 768px) {
   html, body {
     overflow: auto;
   }

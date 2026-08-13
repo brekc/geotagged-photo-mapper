@@ -174,6 +174,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
   - Custom CRS: paste a WKT or PROJ4 string, or upload a `.prj` file, for a project-specific datum or projection that isn't in the EPSG registry; takes priority over the EPSG code field when filled in
 - CSV coordinate columns use `longitude`/`latitude` for geographic CRS and `easting`/`northing` for projected CRS
 - Custom export filename
+- Datum shifts (e.g. NAD83(HARN) &harr; NAD83(2011)) are handled by pyproj/PROJ, not skipped or approximated as identical. The highest-accuracy shift grids aren't bundled with the install, so on first export needing one, PROJ fetches it from its CDN and caches it to `data/proj_cache/` for every export after; if the server has no internet access, exports still work, just at whatever accuracy the bundled grids allow instead of the best available
 
 **Optional export metadata** (applied at download time, columns omitted if left blank)
 - **Photo Source**: a base path prepended to each filename, written to a `source` column (e.g. `S3://bucket/project/IMG_001.JPG`)

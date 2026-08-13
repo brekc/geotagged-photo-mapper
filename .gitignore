@@ -20,6 +20,10 @@ build/
 /data/state_plane_reference.csv
 /data/state_plane_zones.geojson
 
+# PROJ's cache of datum-shift grid files downloaded over the network
+# (see PROJ_USER_WRITABLE_DIRECTORY in geotagged_photo_mapper.py)
+/data/proj_cache/
+
 # OS
 .DS_Store
 Thumbs.db

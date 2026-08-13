@@ -32,6 +32,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from shapely.geometry import Point
 
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+
+# PROJ's on-disk cache for grid files it downloads over the network (see the
+# PROJ_NETWORK note below). Pointed at data/ so it survives container
+# restarts via the same volume mount as the State Plane zone cache below,
+# rather than PROJ's OS-default cache dir, which would be wiped with the
+# container. Has to be set before pyproj is imported, since that's when the
+# underlying PROJ context (and its cache location) is set up.
+os.environ.setdefault('PROJ_USER_WRITABLE_DIRECTORY', os.path.join(_DATA_DIR, 'proj_cache'))
+
 # geopandas/pyproj emit this warning as a side effect of import, so the
 # filter has to be in place before they're imported rather than at the
 # top of the file with the rest of the warnings/logging setup.
@@ -41,6 +51,21 @@ with warnings.catch_warnings():
     from pyproj import CRS
     from pyproj.database import query_crs_info
     from pyproj.enums import PJType
+    from pyproj.network import set_network_enabled
+
+# Some datum transformations - notably between older regional datum
+# realizations (e.g. NAD83(HARN), the datum a lot of GPS data collectors and
+# survey-grade GNSS receivers from the 1990s/2000s were set up to log in) and
+# the current NAD83(2011) - need a shift-grid file that isn't bundled with
+# pyproj's install. Without it, PROJ silently falls back to a lower-accuracy
+# transformation (single-digit meters, vs. sub-meter with the grid), which
+# defeats the purpose of exporting survey-grade points. Enabling PROJ's
+# network mode lets it fetch the needed grid from PROJ's CDN on first use and
+# cache it locally (see PROJ_USER_WRITABLE_DIRECTORY above) for every export
+# after. This degrades gracefully, not a hard requirement, if the server has
+# no internet access: exports still work, just at whatever accuracy the
+# grids bundled with pyproj already allow.
+set_network_enabled(True)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -65,7 +90,6 @@ try:
 except Exception:
     _ALL_PROJECTED_CRS = []
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 _SP_CSV_URL = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_plane_reference.csv'
 _COUNTIES_URL = 'https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_20m.zip'
 _sp_zones_cache: dict | None = None
@@ -422,6 +446,7 @@ async def export(
     source_path: str = Form(default=''),
     flight_altitude: str = Form(default=''),
     altitude_unit: str = Form(default='feet'),
+    export_name: str = Form(default='photo_locations'),
 ):
     """Reproject the cached photo points and stream them back as a file.
 
@@ -431,6 +456,14 @@ async def export(
     lets the manual EPSG field override the region/common CRS pickers.
     """
     fmt = format.lower()
+
+    # Sanitized the same way the frontend already sanitizes it for the
+    # blob-download filename (strip characters that are illegal in a
+    # filename on Windows/macOS/Linux); re-done here too since this is what
+    # actually names the file/layer *inside* multi-file formats (FileGDB,
+    # GeoPackage, Shapefile), which the frontend's client-side rename of the
+    # outer blob can't reach.
+    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
     custom_crs = custom_crs.strip()
     if custom_crs:
@@ -510,15 +543,15 @@ async def export(
             return Response(
                 content=buf.getvalue().encode(),
                 media_type='text/csv',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations.csv"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}.csv"'},
             )
 
         elif fmt == 'filegdb':
             # A File Geodatabase is itself a directory of files, so it has to
             # be zipped up before it can be sent as a single HTTP response.
-            gdb_path = os.path.join(tmp_dir, 'photo_locations.gdb')
-            gdf.to_file(gdb_path, driver='OpenFileGDB', layer='photo_locations')
-            zip_path = os.path.join(tmp_dir, 'photo_locations_gdb.zip')
+            gdb_path = os.path.join(tmp_dir, f'{name}.gdb')
+            gdf.to_file(gdb_path, driver='OpenFileGDB', layer=name)
+            zip_path = os.path.join(tmp_dir, f'{name}_gdb.zip')
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root, dirs, files in os.walk(gdb_path):
                     for file in files:
@@ -530,43 +563,43 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/zip',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations_gdb.zip"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}_gdb.zip"'},
             )
 
         elif fmt == 'geojson':
-            out_path = os.path.join(tmp_dir, 'photo_locations.geojson')
+            out_path = os.path.join(tmp_dir, f'{name}.geojson')
             gdf.to_file(out_path, driver='GeoJSON')
             with open(out_path, 'rb') as fh:
                 content = fh.read()
             return Response(
                 content=content,
                 media_type='application/geo+json',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations.geojson"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}.geojson"'},
             )
 
         elif fmt == 'geopackage':
-            out_path = os.path.join(tmp_dir, 'photo_locations.gpkg')
-            gdf.to_file(out_path, driver='GPKG', layer='photo_locations')
+            out_path = os.path.join(tmp_dir, f'{name}.gpkg')
+            gdf.to_file(out_path, driver='GPKG', layer=name)
             with open(out_path, 'rb') as fh:
                 content = fh.read()
             return Response(
                 content=content,
                 media_type='application/geopackage+sqlite3',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations.gpkg"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}.gpkg"'},
             )
 
         elif fmt == 'kml':
             # The KML spec requires coordinates in WGS 84, so reproject to it
             # regardless of what CRS the user picked for other formats.
             kml_gdf = gdf.to_crs('EPSG:4326')
-            out_path = os.path.join(tmp_dir, 'photo_locations.kml')
+            out_path = os.path.join(tmp_dir, f'{name}.kml')
             kml_gdf.to_file(out_path, driver='KML')
             with open(out_path, 'rb') as fh:
                 content = fh.read()
             return Response(
                 content=content,
                 media_type='application/vnd.google-earth.kml+xml',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations.kml"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}.kml"'},
             )
 
         elif fmt == 'shapefile':
@@ -575,20 +608,20 @@ async def export(
             # above, it gets zipped before being returned.
             shp_dir = os.path.join(tmp_dir, 'shapefile')
             os.makedirs(shp_dir)
-            shp_path = os.path.join(shp_dir, 'photo_locations.shp')
+            shp_path = os.path.join(shp_dir, f'{name}.shp')
             gdf.to_file(shp_path, driver='ESRI Shapefile')
-            zip_path = os.path.join(tmp_dir, 'photo_locations_shp.zip')
+            zip_path = os.path.join(tmp_dir, f'{name}_shp.zip')
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
-                    candidate = os.path.join(shp_dir, f'photo_locations{ext}')
+                    candidate = os.path.join(shp_dir, f'{name}{ext}')
                     if os.path.exists(candidate):
-                        zf.write(candidate, f'photo_locations{ext}')
+                        zf.write(candidate, f'{name}{ext}')
             with open(zip_path, 'rb') as fh:
                 content = fh.read()
             return Response(
                 content=content,
                 media_type='application/zip',
-                headers={'Content-Disposition': 'attachment; filename="photo_locations_shp.zip"'},
+                headers={'Content-Disposition': f'attachment; filename="{name}_shp.zip"'},
             )
 
         else:
