@@ -20,7 +20,6 @@ import re
 import shutil
 import tempfile
 import urllib.request
-import warnings
 import zipfile
 from typing import List
 
@@ -40,16 +39,20 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 # that's when PROJ's cache location gets locked in.
 os.environ.setdefault('PROJ_USER_WRITABLE_DIRECTORY', os.path.join(_DATA_DIR, 'proj_cache'))
 
-# geopandas/pyproj emit this warning as a side effect of import, so the
-# filter has to be in place before they're imported rather than at the
-# top of the file with the rest of the warnings/logging setup.
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message="pyproj unable to set PROJ database path")
-    import geopandas as gpd
-    from pyproj import CRS
-    from pyproj.database import query_crs_info
-    from pyproj.enums import PJType
-    from pyproj.network import set_network_enabled
+# A system-wide PROJ_LIB/PROJ_DATA (e.g. set by a PostgreSQL/PostGIS install)
+# can point at a different, incompatible PROJ database and break every CRS
+# lookup with "Invalid projection ... no database context specified". Clear
+# both so pyproj falls back to auto-detecting the PROJ data that ships with
+# this environment's own pyproj/proj install, rather than trusting whatever
+# the shell happened to inherit.
+os.environ.pop('PROJ_LIB', None)
+os.environ.pop('PROJ_DATA', None)
+
+import geopandas as gpd
+from pyproj import CRS
+from pyproj.database import query_crs_info
+from pyproj.enums import PJType
+from pyproj.network import set_network_enabled
 
 # Some datum transformations (e.g. NAD83(HARN) -> NAD83(2011)) need a
 # shift-grid file that isn't bundled with pyproj, and PROJ silently falls
