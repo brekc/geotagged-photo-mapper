@@ -34,12 +34,10 @@ from shapely.geometry import Point
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
-# PROJ's on-disk cache for grid files it downloads over the network (see the
-# PROJ_NETWORK note below). Pointed at data/ so it survives container
-# restarts via the same volume mount as the State Plane zone cache below,
-# rather than PROJ's OS-default cache dir, which would be wiped with the
-# container. Has to be set before pyproj is imported, since that's when the
-# underlying PROJ context (and its cache location) is set up.
+# PROJ's on-disk cache for network-fetched grid files (see set_network_enabled
+# below). Pointed at data/ so it survives container restarts instead of
+# PROJ's default cache dir; must be set before pyproj is imported, since
+# that's when PROJ's cache location gets locked in.
 os.environ.setdefault('PROJ_USER_WRITABLE_DIRECTORY', os.path.join(_DATA_DIR, 'proj_cache'))
 
 # geopandas/pyproj emit this warning as a side effect of import, so the
@@ -53,29 +51,23 @@ with warnings.catch_warnings():
     from pyproj.enums import PJType
     from pyproj.network import set_network_enabled
 
-# Some datum transformations - notably between older regional datum
-# realizations (e.g. NAD83(HARN), the datum a lot of GPS data collectors and
-# survey-grade GNSS receivers from the 1990s/2000s were set up to log in) and
-# the current NAD83(2011) - need a shift-grid file that isn't bundled with
-# pyproj's install. Without it, PROJ silently falls back to a lower-accuracy
-# transformation (single-digit meters, vs. sub-meter with the grid), which
-# defeats the purpose of exporting survey-grade points. Enabling PROJ's
-# network mode lets it fetch the needed grid from PROJ's CDN on first use and
-# cache it locally (see PROJ_USER_WRITABLE_DIRECTORY above) for every export
-# after. This degrades gracefully, not a hard requirement, if the server has
-# no internet access: exports still work, just at whatever accuracy the
-# grids bundled with pyproj already allow.
+# Some datum transformations (e.g. NAD83(HARN) -> NAD83(2011)) need a
+# shift-grid file that isn't bundled with pyproj, and PROJ silently falls
+# back to lower accuracy (meters, not sub-meter) without it. Network mode
+# lets PROJ fetch the grid on first use and cache it (see
+# PROJ_USER_WRITABLE_DIRECTORY above). Not a hard requirement: with no
+# internet access, exports still work at whatever accuracy the bundled
+# grids allow.
 set_network_enabled(True)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# The most recent /upload result, held in memory so /export can reproject and
-# reformat it without asking the browser to re-send the photos. This means
-# the app only supports one "session" at a time (a second upload replaces the
-# first), which is fine for a local single-user tool but wouldn't be safe for
-# multiple concurrent users.
+# The most recent /upload result, held in memory so /export can reproject
+# and reformat it without the browser re-sending the photos. One "session"
+# at a time (a second upload replaces the first) — fine for a local
+# single-user tool, not safe for concurrent users.
 cached_features: list = []
 
 # Load every projected EPSG CRS once at startup so /crs-search can filter an
@@ -240,14 +232,9 @@ def extract_gps(file_paths):
         metadata_list = et.get_metadata(file_paths)
 
     for meta in metadata_list:
-        # ExifTool's "Composite" tags are its own best-effort combination of
-        # the raw EXIF GPS tags (already converted to signed decimal degrees),
-        # so prefer them and only fall back to raw EXIF tags if a photo's
-        # metadata doesn't have a Composite tag for some reason. This uses
-        # explicit `is not None` checks rather than `x or y`, since a photo
-        # taken exactly on the equator, the prime meridian, or at sea level
-        # has a legitimate value of 0.0, which `or` would treat as falsy and
-        # incorrectly skip in favor of the fallback.
+        # ExifTool's "Composite" tags are its best-effort combination of the
+        # raw EXIF GPS tags, already in signed decimal degrees, so prefer
+        # them and fall back to raw EXIF only if a photo lacks one.
         composite_lat = meta.get('Composite:GPSLatitude')
         composite_lon = meta.get('Composite:GPSLongitude')
         lat = _coalesce(composite_lat, meta.get('EXIF:GPSLatitude'))
@@ -259,12 +246,10 @@ def extract_gps(file_paths):
         lat = float(lat)
         lon = float(lon)
 
-        # Composite tags already carry the correct sign (negative = south/west).
-        # Raw EXIF tags store an unsigned value plus a separate "Ref" tag
-        # (e.g. GPSLatitudeRef = 'S'). Latitude and longitude are computed as
-        # separate Composite tags by ExifTool, so each needs its own check
-        # here: it's possible for one to be present and the other to have
-        # fallen back to the raw tag.
+        # Composite tags already carry the correct sign; raw EXIF tags are
+        # unsigned and need their separate "Ref" tag (e.g. GPSLatitudeRef =
+        # 'S') applied. Checked independently since lat/lon can each fall
+        # back to the raw tag on their own.
         if composite_lat is None and meta.get('EXIF:GPSLatitudeRef', '').upper() == 'S':
             lat = -abs(lat)
         if composite_lon is None and meta.get('EXIF:GPSLongitudeRef', '').upper() == 'W':
@@ -457,12 +442,10 @@ async def export(
     """
     fmt = format.lower()
 
-    # Sanitized the same way the frontend already sanitizes it for the
-    # blob-download filename (strip characters that are illegal in a
-    # filename on Windows/macOS/Linux); re-done here too since this is what
-    # actually names the file/layer *inside* multi-file formats (FileGDB,
-    # GeoPackage, Shapefile), which the frontend's client-side rename of the
-    # outer blob can't reach.
+    # Same sanitization the frontend applies to the download filename,
+    # re-done here since this name also becomes the file/layer name *inside*
+    # multi-file formats (FileGDB, GeoPackage, Shapefile), which the
+    # frontend's client-side rename of the outer blob can't reach.
     name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
     custom_crs = custom_crs.strip()
@@ -500,24 +483,20 @@ async def export(
         gdf['source'] = gdf['filename'].apply(lambda fn: clean_source + fn)
 
     # Flight altitude: same "only add columns if provided" rule as source
-    # path above. flight_altitude arrives as a plain string (not a FastAPI
-    # Optional[float] form field) to sidestep FastAPI's coercion of an empty
-    # string into a validation error rather than None.
+    # path above. Arrives as a plain string, not FastAPI's Optional[float],
+    # to avoid it turning an empty field into a validation error.
     try:
         alt_val = float(flight_altitude) if flight_altitude.strip() else None
     except ValueError:
         alt_val = None
 
     if alt_val is not None:
-        # Always store both units regardless of which one was entered, so
-        # downstream consumers of the export don't need to know which unit
-        # the user originally typed in.
+        # Only the unit actually entered gets written — not a converted
+        # value for the other, which would imply false precision.
         if altitude_unit == 'meters':
             gdf['flight_alt_m'] = round(alt_val, 1)
-            gdf['flight_alt_ft'] = round(alt_val / 0.3048, 1)
         else:
             gdf['flight_alt_ft'] = round(alt_val, 1)
-            gdf['flight_alt_m'] = round(alt_val * 0.3048, 1)
 
     gdf = gdf.to_crs(target_crs)
 

@@ -1,14 +1,12 @@
 /* exported openLightbox, setCrsForExport */
-// openLightbox and setCrsForExport are called from onclick="" attributes in
-// HTML strings this file builds itself (photo popups and zone popups), not
-// from anywhere a linter can see, hence the "exported" directive above.
+// Called from onclick="" attributes in HTML strings this file builds itself
+// (photo popups and zone popups), not from anywhere a linter can see.
 
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
 
-// Three basemap choices, switchable from the layers control in the top
-// right of the map. OpenStreetMap is the default; the other two are just
-// alternate tile sources for imagery or a lighter visual style.
+// Three basemap choices, switchable from the layers control top-right.
+// OpenStreetMap is the default; the others are just alternate tile sources.
 const basemaps = {
   'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -46,9 +44,9 @@ const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clear-btn');
 
 let selectedFiles = [];
-// Maps filename -> a local blob URL for that file, so photo popups and the
-// results list can show thumbnails without re-reading the file or sending
-// it anywhere. These files never leave the browser until Upload is clicked.
+// filename -> local blob URL, so popups and the results list can show
+// thumbnails without re-reading the file. Nothing leaves the browser until
+// Upload is clicked.
 let photoURLs = new Map();
 
 function setFiles(files) {
@@ -150,17 +148,15 @@ function plotGeoJSON(geojson) {
     mappedPhotos.push({ filename: p.filename, lat, lon, marker });
   });
 
-  // Zoom/pan the map to fit every plotted photo, ignoring the case where
-  // fitBounds is called on an empty or invalid bounds (e.g. right after a
-  // Clear All).
+  // Zoom/pan to fit every plotted photo. Wrapped in try/catch since
+  // fitBounds throws on an empty/invalid bounds (e.g. right after Clear All).
   try {
     if (mappedPhotos.length > 0) {
       const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
     }
   } catch (_) {
-    // Ignored: an invalid-bounds error here just means there was nothing
-    // valid to fit to, which is fine.
+    // Nothing valid to fit to — fine.
   }
 }
 
@@ -178,9 +174,8 @@ function buildMarker(p, lat, lon, imgUrl) {
   if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
   if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
 
-  // Only show a thumbnail if we still have this photo's local blob URL
-  // (photoURLs is cleared on a fresh file selection, so it's possible to
-  // have marker data without a matching image if the user re-selected files).
+  // Only show a thumbnail if we still have this photo's blob URL — a fresh
+  // file selection clears photoURLs, so marker data can outlive its image.
   const imgTag = imgUrl
     ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
     : '';
@@ -216,10 +211,10 @@ let selectedEpsg = 4326; // default: WGS 84, matches the label below
 let allCrsResults = [];   // full unfiltered list of CRS results for the current region
 let activeUnits = 'meters';
 
-// Datum priority: lower number = newer/preferred (null = non-US, always keep).
-// Used by the "latest-datum filter" below to collapse a zone's older datum
-// realizations (HARN, plain NAD83, etc.) down to just the newest one, unless
-// the user checks "Show all datum realizations".
+// Datum priority: lower = newer/preferred (null = non-US, always kept).
+// The "latest-datum filter" below uses this to collapse a zone's older
+// realizations (HARN, plain NAD83, etc.) to just the newest one, unless
+// "Show all datum realizations" is checked.
 const DATUM_PRIORITY = {
   'NAD83(2011)': 1, 'NAD83(2011)(IERS)': 1,
   'NAD83(NSRS2007)': 2, 'NAD83(PA11)': 2, 'NAD83(MA11)': 2,
@@ -229,10 +224,9 @@ const DATUM_PRIORITY = {
 };
 
 function parseCrs(name) {
-  // CRS names from pyproj look like "NAD83(2011) / Washington North (ftUS)".
-  // Split on " / " to separate the datum from the zone name, and pull the
-  // optional feet marker off the end of the zone name so zones can be
-  // grouped by their base name regardless of units or datum.
+  // CRS names look like "NAD83(2011) / Washington North (ftUS)". Split on
+  // " / " for datum vs. zone, and strip the feet marker so zones group by
+  // base name regardless of units or datum.
   const slash = name.indexOf(' / ');
   const datum = slash >= 0 ? name.slice(0, slash) : '';
   const zone = slash >= 0 ? name.slice(slash + 3) : name;
@@ -243,8 +237,8 @@ function parseCrs(name) {
 }
 
 function applyFilters(list) {
-  // 1. units filter: keep only meters, only feet, or everything, depending
-  // on which toggle button is active.
+  // 1. units filter: keep only meters, only feet, or everything, per the
+  // active toggle button.
   let filtered = list.filter(r => {
     const { isFeet } = parseCrs(r.name);
     if (activeUnits === 'meters') return !isFeet;
@@ -253,9 +247,8 @@ function applyFilters(list) {
   });
 
   // 2. latest-datum filter (skip if "show all" is checked): for each
-  // base zone name + units combination, keep only the entry with the best
-  // (lowest) datum priority. Non-US zones have no datum priority mapping
-  // and are always kept as-is.
+  // base zone + units combo, keep only the entry with the lowest datum
+  // priority. Non-US zones have no priority mapping and are kept as-is.
   if (!showAllDatumsChk.checked) {
     const best = new Map(); // key: "baseZone|isFeet" -> best entry so far
     const nonUs = [];
@@ -371,12 +364,10 @@ crsOptionsSelect.addEventListener('change', () => {
 });
 
 // ── Custom CRS (paste WKT/PROJ4, or upload a .prj file) ──
-// This is the highest-priority CRS source: if the textarea has anything in
-// it at download time, it overrides the EPSG field, which in turn overrides
-// the region/common pickers (see the download handler below). Because it's
-// the highest priority, every other way of picking a CRS (common, region,
-// manual EPSG, map-popup zone click) must clear it via clearCustomCrs(),
-// or the export would silently keep using the abandoned custom CRS.
+// Highest-priority CRS source: a non-empty textarea at download time
+// overrides the EPSG field, which overrides the region/common pickers (see
+// the download handler below). Every other CRS-picking path must clear it
+// via clearCustomCrs(), or the export would silently keep using it.
 function clearCustomCrs() {
   customCrsInput.value = '';
   customCrsFile.value = '';
@@ -417,9 +408,9 @@ function updateCustomCrsLabel() {
   crsSelectedLabel.textContent = `Using: EPSG:${currentEpsgValue()}`;
 }
 
-// The effective EPSG at any moment: the manual field if the user typed one,
-// otherwise whatever the common/region/zone pickers last set. Shared by the
-// label update above and the download handler below so the two can't drift.
+// Effective EPSG: the manual field if typed, else whatever the
+// common/region/zone pickers last set. Shared by the label update above
+// and the download handler below so the two can't drift.
 function currentEpsgValue() {
   const customEpsg = document.getElementById('custom-epsg').value.trim();
   return customEpsg !== '' ? customEpsg : String(selectedEpsg);
@@ -454,10 +445,8 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   formData.append('flight_altitude', document.getElementById('flight-altitude').value.trim());
   formData.append('altitude_unit', document.getElementById('altitude-unit').value);
   // The backend uses this to name the file/layer *inside* multi-file
-  // formats (FileGDB directory + layer name, GeoPackage layer, Shapefile
-  // component files) — the client-side rename below only renames the
-  // outer downloaded blob, which a zipped or multi-layer format's insides
-  // don't see.
+  // formats (FileGDB, GeoPackage, Shapefile) — the rename below only
+  // renames the outer downloaded blob, which those insides don't see.
   formData.append('export_name', baseName);
 
   const dlBtn = e.currentTarget;
@@ -475,9 +464,8 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
 
     const filename = (FORMAT_EXT[format] || (f => `${f}.${format}`))(baseName);
 
-    // Downloads are triggered by creating a throwaway <a download> link
-    // rather than navigating the page, since the export arrives as a blob
-    // in the fetch response, not a URL the browser can navigate to directly.
+    // The export arrives as a blob, not a URL, so trigger the download via
+    // a throwaway <a download> link rather than navigating the page.
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -607,9 +595,9 @@ function zonePopupHtml(name, epsg, area) {
 }
 
 // ── UTM Zones ──
-// Generated entirely on the client: every UTM zone is a simple 6-degree-wide
-// rectangle by definition, so there's no need to fetch this from the server
-// the way State Plane zones are (those have irregular, county-based borders).
+// Generated client-side: every UTM zone is a simple 6-degree-wide rectangle
+// by definition, unlike State Plane's irregular, county-based borders,
+// which do need a server fetch.
 function buildUtmLayer(datum) {
   const useNad83 = datum === 'nad83';
   const features = [];
@@ -656,9 +644,8 @@ async function buildStatePlaneLayer() {
     },
     onEachFeature(f, lyr) {
       const p = f.properties;
-      // Short label: strip the datum prefix (everything before " / ") so
-      // the on-map tooltip reads "Washington North" instead of the full
-      // "NAD83(2011) / Washington North".
+      // Strip the datum prefix so the tooltip reads "Washington North"
+      // instead of "NAD83(2011) / Washington North".
       const shortName = p.name.includes(' / ') ? p.name.split(' / ')[1] : p.name;
       lyr.bindTooltip(shortName, {
         permanent: false, direction: 'center',
@@ -676,9 +663,8 @@ async function buildStatePlaneLayer() {
     },
   });
 
-  // Below SP_LABEL_ZOOM, labels only show on hover (there isn't room for all
-  // of them at once); at or above it, every zone gets a permanent label
-  // since there's enough screen space per zone to read them.
+  // Below SP_LABEL_ZOOM there isn't room for every label, so they only show
+  // on hover; at or above it, every zone gets a permanent label.
   function updateLabels() {
     const permanent = map.getZoom() >= SP_LABEL_ZOOM;
     layer.eachLayer(lyr => {
@@ -767,9 +753,8 @@ lightboxClose.addEventListener('click', e => {
   closeLightbox();
 });
 
-// Clicking the dark backdrop closes the lightbox, but clicking the image
-// itself must not (that's how dragging starts), which is why this checks
-// that the click target is the stage element and not something inside it.
+// Clicking the backdrop closes the lightbox; clicking the image must not
+// (that's how dragging starts), hence the target === stage check.
 lightboxStage.addEventListener('click', e => {
   if (e.target === lightboxStage) closeLightbox();
 });
@@ -817,11 +802,10 @@ document.addEventListener('mouseup', () => {
 
 
 // ======== SOURCE PATH AUTO-SLASH ========
-// Once the user tabs/clicks away from the Photo Source field, make sure it
-// ends in a separator so the backend can safely concatenate it with each
-// filename. The separator style (\ vs /) is inferred from whatever the user
-// already typed, so a Windows path keeps its backslashes and a URL/Unix
-// path keeps its forward slashes.
+// On blur, make sure the Photo Source field ends in a separator so the
+// backend can safely concatenate it with each filename. Separator style
+// (\ vs /) is inferred from what's already typed, so Windows paths keep
+// backslashes and URL/Unix paths keep forward slashes.
 document.getElementById('source-path').addEventListener('blur', function () {
   const val = this.value.trim();
   if (!val) { this.value = ''; return; }

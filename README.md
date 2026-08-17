@@ -178,7 +178,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Optional export metadata** (applied at download time, columns omitted if left blank)
 - **Photo Source**: a base path prepended to each filename, written to a `source` column (e.g. `S3://bucket/project/IMG_001.JPG`)
-- **Flight Altitude AGL**: entered in feet or meters; both values stored in `flight_alt_ft` and `flight_alt_m` columns
+- **Flight Altitude AGL**: entered in feet or meters; only the entered unit's column (`flight_alt_ft` or `flight_alt_m`) is written to the export
 
 **Reference Layers**
 - Toggle UTM Zones or US State Plane Zones on the map
