@@ -187,9 +187,9 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 ---
 
-## Tech Stack
+## Packages
 
-| Component | Role |
+| Package | Role |
 |---|---|
 | **[FastAPI](https://fastapi.tiangolo.com/)** | Web server & API |
 | **[PyExifTool](https://github.com/smarnach/pyexiftool)** | EXIF/GPS metadata extraction |
