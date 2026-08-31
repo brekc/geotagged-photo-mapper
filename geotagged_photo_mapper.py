@@ -1,8 +1,8 @@
-"""Geotagged Photo Mapper backend.
+""" geotagged_photo_mapper.py
 
-A small FastAPI app with four jobs:
-  1. Accept uploaded photos and pull GPS coordinates out of their EXIF data.
-  2. Serve those points back to the browser as GeoJSON so Leaflet can plot them.
+The backend implementing FastAPI with four tasks:
+  1. Import uploaded photos and pull GPS coordinates from EXIF data
+  2. Return GPS coordinates to the browser in GeoJSON format for plotting with Leaflet
   3. Let the user search for a coordinate reference system (CRS) to export into,
      either from a curated list, a region search, a manual EPSG code, or a
      pasted/uploaded custom definition (WKT or PROJ4).
