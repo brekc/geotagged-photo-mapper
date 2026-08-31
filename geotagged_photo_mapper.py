@@ -1,16 +1,16 @@
-""" geotagged_photo_mapper.py
+"""geotagged_photo_mapper.py
 
 The backend implementing FastAPI with four tasks:
-  1. Import uploaded photos and pull GPS coordinates from EXIF data
-  2. Return GPS coordinates to the browser in GeoJSON format for plotting with Leaflet
-  3. Let the user search for a coordinate reference system (CRS) to export into,
-     either from a curated list, a region search, a manual EPSG code, or a
+  1. Import uploaded photos and pull GPS coordinates from EXIF data.
+  2. Return GPS coordinates to the browser in GeoJSON format for plotting with Leaflet.
+  3. Let the user search for a coordinate reference system (CRS) from a
+     curated list, a region search, a manual EPSG code, or a
      pasted/uploaded custom definition (WKT or PROJ4).
-  4. Reproject the cached points into that CRS and stream them back as a file
+  4. Reproject the cached points into the target CRS and stream them back as a file
      in one of several GIS formats.
 
 Nothing is written to disk except the temporary files needed to build each
-export, and the State Plane zone cache described below.
+export and the State Plane zone cache described below.
 """
 
 import io
