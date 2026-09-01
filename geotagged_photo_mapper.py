@@ -31,20 +31,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from shapely.geometry import Point
 
+# Set PROJ grid cache before importing. This will preserve the grid cache
+# following container restarts.
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-
-# PROJ's on-disk cache for network-fetched grid files (see set_network_enabled
-# below). Pointed at data/ so it survives container restarts instead of
-# PROJ's default cache dir; must be set before pyproj is imported, since
-# that's when PROJ's cache location gets locked in.
 os.environ.setdefault('PROJ_USER_WRITABLE_DIRECTORY', os.path.join(_DATA_DIR, 'proj_cache'))
 
-# A system-wide PROJ_LIB/PROJ_DATA (e.g. set by a PostgreSQL/PostGIS install)
-# can point at a different, incompatible PROJ database and break every CRS
-# lookup with "Invalid projection ... no database context specified". Clear
-# both so pyproj falls back to auto-detecting the PROJ data that ships with
-# this environment's own pyproj/proj install, rather than trusting whatever
-# the shell happened to inherit.
+# PROJ_LIB and PROJ_DATA can point to an incompatible system copy from a
+# PostgreSQL/PostGIS installation. Clear these to match the environment. 
 os.environ.pop('PROJ_LIB', None)
 os.environ.pop('PROJ_DATA', None)
 
@@ -54,28 +47,19 @@ from pyproj.database import query_crs_info
 from pyproj.enums import PJType
 from pyproj.network import set_network_enabled
 
-# Some datum transformations (e.g. NAD83(HARN) -> NAD83(2011)) need a
-# shift-grid file that isn't bundled with pyproj, and PROJ silently falls
-# back to lower accuracy (meters, not sub-meter) without it. Network mode
-# lets PROJ fetch the grid on first use and cache it (see
-# PROJ_USER_WRITABLE_DIRECTORY above). Not a hard requirement: with no
-# internet access, exports still work at whatever accuracy the bundled
-# grids allow.
+# Allow PROJ to download and cache the latest shift-grid files for
+# datum transformations (e.g. NAD83(HARN) -> NAD83(2011))
 set_network_enabled(True)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# The most recent /upload result, held in memory so /export can reproject
-# and reformat it without the browser re-sending the photos. One "session"
-# at a time (a second upload replaces the first) — fine for a local
-# single-user tool, not safe for concurrent users.
+# Cached /upload result for /export. This will handle one upload at a time,
+# meaning that subsequent uploads will replace what is in memory. 
 cached_features: list = []
 
-# Load every projected EPSG CRS once at startup so /crs-search can filter an
-# in-memory list on each request instead of hitting the PROJ database every
-# time. This list is what the "Region" dropdown searches through.
+# Load all projected EPSG CRS entries for /crs-search filtering.
 try:
     _ALL_PROJECTED_CRS = list(query_crs_info(
         auth_name='EPSG',
@@ -89,18 +73,10 @@ _SP_CSV_URL = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_pl
 _COUNTIES_URL = 'https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_20m.zip'
 _sp_zones_cache: dict | None = None
 
-
+# Build US State Plane zones by joining a state plane reference CSV and the
+# Census Bureau's county boundaries. Dissolving by zone and caching the result
+# will keep the NAD83 zones as a reference layer.
 def _build_sp_zones(cache_path: str) -> dict:
-    """Build the US State Plane zone polygons and cache them to disk.
-
-    There's no single official "State Plane zones" shapefile, so this stitches
-    one together: a state-plane reference CSV (which zone each county belongs
-    to) is joined against the Census Bureau's county boundary shapefile, then
-    counties in the same zone are dissolved into one polygon per zone. Both
-    source files are downloaded once and cached under data/, and the CSV
-    join only keeps NAD83 zones since that's the current, non-deprecated
-    datum (see the "State Plane: NAD83 only" note in the README).
-    """
     os.makedirs(_DATA_DIR, exist_ok=True)
 
     csv_path = os.path.join(_DATA_DIR, 'state_plane_reference.csv')
@@ -115,8 +91,7 @@ def _build_sp_zones(cache_path: str) -> dict:
         with zipfile.ZipFile(zip_path, 'r') as zf:
             zf.extractall(counties_dir)
 
-    # The county shapefile only needs its FIPS code (used to join against the
-    # state-plane CSV below) and its geometry.
+    # Only need FIPS code and geometry for the zone join.
     shp_files = [f for f in os.listdir(counties_dir) if f.endswith('.shp')]
     counties_gdf = gpd.read_file(os.path.join(counties_dir, shp_files[0]))[['GEOID', 'geometry']]
     counties_gdf = counties_gdf.rename(columns={'GEOID': 'fips'})
@@ -131,15 +106,13 @@ def _build_sp_zones(cache_path: str) -> dict:
     )
     sp_df['nad83_epsg'] = sp_df['nad83_epsg'].astype(int)
 
-    # Join counties to their zone, then dissolve (merge geometries) so each
-    # zone becomes a single polygon instead of one polygon per county.
+    # Dissolve counties into one polygon per zone.
     merged = counties_gdf.merge(sp_df, on='fips', how='inner')
     zones_gdf = merged.dissolve(by='nad83_epsg').reset_index()
     zones_gdf = zones_gdf.to_crs('EPSG:4326')
 
+    # Need human-readable name and area-of-use for map popups.
     def _crs_info(epsg: int):
-        # Look up the human-readable name and area-of-use for each zone's
-        # EPSG code, for the map popup and export label.
         try:
             crs = CRS.from_epsg(epsg)
             area = crs.area_of_use.name if crs.area_of_use else ''
@@ -159,15 +132,10 @@ def _build_sp_zones(cache_path: str) -> dict:
         json.dump(result, f)
     return result
 
-
+# Return State Plane zone GeoJSON. Three cached layers will include
+# in-memory dict, on-disk file (data/state_plane_zones.geojson), and
+# a full build of _build_sp_zones() if neither exists.
 def _get_sp_zones() -> dict:
-    """Return the State Plane zone GeoJSON, building and caching it on first use.
-
-    Three layers of caching here, cheapest first: an in-memory dict for the
-    life of the process, then a file on disk (data/state_plane_zones.geojson)
-    that survives restarts, and only if neither exists do we pay the cost of
-    downloading and dissolving the source data in _build_sp_zones().
-    """
     global _sp_zones_cache
     if _sp_zones_cache is not None:
         return _sp_zones_cache
@@ -179,10 +147,7 @@ def _get_sp_zones() -> dict:
     _sp_zones_cache = _build_sp_zones(cache_path)
     return _sp_zones_cache
 
-
-# Lets a user type a two-letter state/province code (e.g. "WA") into the
-# region search box and have it expand to the full name that the CRS
-# area-of-use strings actually use ("Washington").
+# Expand two-letter state and province codes to full names for CRS area-of-use matching.
 STATE_ABBR: dict[str, str] = {
     'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas',
     'CA': 'California', 'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware',
@@ -197,47 +162,32 @@ STATE_ABBR: dict[str, str] = {
     'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah',
     'VT': 'Vermont', 'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia',
     'WI': 'Wisconsin', 'WY': 'Wyoming', 'DC': 'District of Columbia',
-    # Canadian provinces / territories
+    # Canadian provinces/territories
     'AB': 'Alberta', 'BC': 'British Columbia', 'MB': 'Manitoba', 'NB': 'New Brunswick',
     'NL': 'Newfoundland', 'NS': 'Nova Scotia', 'NT': 'Northwest Territories',
     'NU': 'Nunavut', 'ON': 'Ontario', 'PE': 'Prince Edward Island',
     'QC': 'Quebec', 'SK': 'Saskatchewan', 'YT': 'Yukon',
 }
 
-
 # ---------------------------------------------------------------------------
 # GPS extraction
 # ---------------------------------------------------------------------------
 
+# Return the first non-None value. Safer than `or` since 0.0 is valid.
 def _coalesce(*values):
-    """Return the first value that isn't None.
-
-    Used instead of `a or b` for the Composite/EXIF GPS tag fallback below,
-    since `or` treats a legitimate 0.0 (equator, prime meridian, sea level)
-    as falsy and would skip straight to the fallback value.
-    """
     for v in values:
         if v is not None:
             return v
     return None
 
-
+# Extract GPS and camera metadata from photos via ExifTool. This will
+# return a list of dicts (one per geotagged photo).
 def extract_gps(file_paths):
-    """Read GPS and camera metadata out of a batch of photo files via ExifTool.
-
-    Returns a list of plain dicts (one per photo that actually has GPS data),
-    which is the shape the rest of the app works with all the way through to
-    export, so no photo file needs to be touched again after this point.
-    """
     features = []
-
     with ExifToolHelper() as et:
         metadata_list = et.get_metadata(file_paths)
-
     for meta in metadata_list:
-        # ExifTool's "Composite" tags are its best-effort combination of the
-        # raw EXIF GPS tags, already in signed decimal degrees, so prefer
-        # them and fall back to raw EXIF only if a photo lacks one.
+        # Prefer Composite tags (signed decimal degrees); fall back to raw EXIF.
         composite_lat = meta.get('Composite:GPSLatitude')
         composite_lon = meta.get('Composite:GPSLongitude')
         lat = _coalesce(composite_lat, meta.get('EXIF:GPSLatitude'))
@@ -245,14 +195,11 @@ def extract_gps(file_paths):
 
         if lat is None or lon is None:
             continue
-
+          
         lat = float(lat)
         lon = float(lon)
-
-        # Composite tags already carry the correct sign; raw EXIF tags are
-        # unsigned and need their separate "Ref" tag (e.g. GPSLatitudeRef =
-        # 'S') applied. Checked independently since lat/lon can each fall
-        # back to the raw tag on their own.
+        
+        # Raw EXIF tags are unsigned; apply Ref tag sign if used.
         if composite_lat is None and meta.get('EXIF:GPSLatitudeRef', '').upper() == 'S':
             lat = -abs(lat)
         if composite_lon is None and meta.get('EXIF:GPSLongitudeRef', '').upper() == 'W':
@@ -276,18 +223,14 @@ def extract_gps(file_paths):
 
     return features
 
-
 # ---------------------------------------------------------------------------
 # GeoJSON builder
 # ---------------------------------------------------------------------------
 
+# Convert extract_gps() dicts to a GeoJSON FeatureCollection string. Lat and Lon
+# will become point geometry, and the remaining fields will become properties
+# the frontend reads to build popups.
 def build_geojson(features):
-    """Turn a list of extract_gps() dicts into a GeoJSON FeatureCollection string.
-
-    latitude/longitude become the point geometry; everything else in each
-    dict becomes a GeoJSON "properties" field (filename, altitude, datetime,
-    camera_model), which the frontend reads to build map popups.
-    """
     geometries = [Point(f['longitude'], f['latitude']) for f in features]
     properties = [
         {k: v for k, v in f.items() if k not in ('latitude', 'longitude')}
@@ -296,22 +239,13 @@ def build_geojson(features):
     gdf = gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
     return gdf.to_json()
 
-
 # ---------------------------------------------------------------------------
 # Custom CRS parsing
 # ---------------------------------------------------------------------------
 
+# Parse a WKT, PROJ4, or authority string into a CRS. Falls back to from_wkt() for 
+# ESRI .prj files that from_user_input() can not classify.
 def _parse_custom_crs(text: str) -> CRS:
-    """Parse a pasted or uploaded custom CRS definition.
-
-    This backs the "Custom CRS" export field, which accepts either text
-    pasted directly into the textarea or the contents of an uploaded .prj
-    file (the frontend just reads the file as text and reuses the same
-    field). CRS.from_user_input() already understands WKT, PROJ4, PROJJSON,
-    and authority strings like "ESRI:102008", so it covers most real-world
-    inputs on its own. The CRS.from_wkt() fallback exists for the odd
-    ESRI-flavored .prj file that from_user_input() can't classify by itself.
-    """
     text = text.strip()
     try:
         return CRS.from_user_input(text)
@@ -324,7 +258,6 @@ def _parse_custom_crs(text: str) -> CRS:
             'Could not parse the custom CRS. Paste a valid WKT or PROJ4 string, '
             'or upload a .prj file that contains one.'
         )
-
 
 # ---------------------------------------------------------------------------
 # Routes
