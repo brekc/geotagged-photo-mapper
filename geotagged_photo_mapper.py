@@ -267,18 +267,12 @@ def _parse_custom_crs(text: str) -> CRS:
 async def index(request: Request):
     return templates.TemplateResponse(request, 'geotagged-photo-mapper.html')
 
-
 @app.post('/upload')
 async def upload(
     photos: List[UploadFile] = File(...),
 ):
-    """Receive photo uploads, extract GPS data, and cache it for /export.
-
-    Files are written to a temp directory only because ExifTool needs real
-    file paths to read from (it can't read from in-memory bytes), and that
-    temp directory is deleted again in the `finally` block regardless of
-    whether extraction succeeded.
-    """
+    # Extract GPS from uploaded photos and cache results for /export.
+    # Temp files are needed because ExifTool requires real file paths.
     if not photos:
         raise HTTPException(status_code=400, detail='No files received')
 
@@ -297,8 +291,7 @@ async def upload(
             'type': 'FeatureCollection', 'features': []
         })
 
-        # Replaces whatever was uploaded previously; see the comment on
-        # cached_features above for why there's only ever one "session".
+        # Replace previous upload
         global cached_features
         cached_features = features
 
@@ -310,40 +303,25 @@ async def upload(
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-
 @app.get('/zone-geojson')
+# Return State Plane zone polygons. UTM zones are generated through the frontend 
+# with buildUtmLayer().
 def zone_geojson(zone_type: str = Query(..., alias='type')):
-    """Return reference-layer zone polygons for the map.
-
-    Only serves State Plane zones. UTM zones don't need a backend route at
-    all, since they're simple 6-degree-wide rectangles that the frontend
-    generates by formula (see buildUtmLayer() in the JS).
-    """
     if zone_type != 'state_plane':
         raise HTTPException(status_code=400, detail='type must be state_plane')
     return _get_sp_zones()
 
-
 @app.get('/crs-search')
+# Search projected CRS entries by area-of-use name for the Region dropdown.
 async def crs_search(q: str = Query(default='')):
-    """Search the projected-CRS list by region name, for the "Region" dropdown.
-
-    Matching is done against each CRS's "area of use" string (e.g.
-    "United States (USA) - Washington"), not its name, since that's where
-    the state/country name actually lives.
-    """
     q = q.strip()
     if len(q) < 2:
         raise HTTPException(status_code=400, detail='Query must be at least 2 characters')
-
-    # Expand a state / province abbreviation to its full name (e.g. "WA" -> "Washington")
-    # so users can type either.
+    # Expand abbreviations
     term = STATE_ABBR.get(q.upper(), q)
 
     escaped = re.escape(term)
-    # Match "- {term}" at state level. The negative lookahead excludes
-    # county/parish/borough-level area-of-use strings, so e.g. a Washington
-    # state search doesn't also return every "Washington County" CRS.
+    # Match state-level areas and exclude county/parish/borough sub-matches.
     area_pattern = re.compile(
         rf'-\s+{escaped}(?!\s+(?:County|Parish|Borough|Municipality|Census\s+Area|Township))\b',
         re.IGNORECASE,
@@ -357,7 +335,6 @@ async def crs_search(q: str = Query(default='')):
 
     output.sort(key=lambda x: x['name'])
     return output[:400]
-
 
 @app.post('/export')
 async def export(
