@@ -28,12 +28,10 @@ L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 // without touching the reference layers.
 const markerLayer = L.layerGroup().addTo(map);
 
-
 // ======== STATE ========
 // One entry per photo currently on the map, so the results list and the
 // remove/clear buttons can find and remove the matching marker.
 let mappedPhotos = []; // { filename, lat, lon, marker }
-
 
 // ======== FILE HANDLING ========
 const dropZone = document.getElementById('drop-zone');
@@ -85,7 +83,6 @@ dropZone.addEventListener('drop', e => {
   setFiles(e.dataTransfer.files);
 });
 
-
 // ======== UPLOAD ========
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) return;
@@ -125,7 +122,6 @@ uploadBtn.addEventListener('click', async () => {
     uploadBtn.disabled = false;
   }
 });
-
 
 // ======== PLOT GEOJSON ========
 function plotGeoJSON(geojson) {
@@ -190,7 +186,6 @@ function buildMarker(p, lat, lon, imgUrl) {
   marker.bindPopup(content, { maxWidth: 240 });
   return marker;
 }
-
 
 // ======== CRS SELECTION ========
 const regionSelect = document.getElementById('region-select');
@@ -346,11 +341,9 @@ crsOptionsSelect.addEventListener('change', () => {
   const label = crsOptionsSelect.options[crsOptionsSelect.selectedIndex].text;
   selectedEpsg = code;
   crsSelectedLabel.textContent = `Using: ${label}`;
-  // Clear custom CRS so it doesn't silently win at export time.
   clearCustomCrs();
 });
 
-// Highest-priority CRS source: non-empty textarea at download time overrides
 // Highest-priority CRS source: non-empty textarea at download time overrides
 function clearCustomCrs() {
   customCrsInput.value = '';
@@ -373,7 +366,7 @@ customCrsFile.addEventListener('change', () => {
 
 customCrsInput.addEventListener('input', updateCustomCrsLabel);
 
-// A manually typed EPSG code is also a CRS choice.
+// A manually entered EPSG code is also a CRS choice.
 document.getElementById('custom-epsg').addEventListener('input', function () {
   if (this.value.trim() !== '') {
     customCrsInput.value = '';
@@ -391,18 +384,15 @@ function updateCustomCrsLabel() {
   crsSelectedLabel.textContent = `Using: EPSG:${currentEpsgValue()}`;
 }
 
-// Effective EPSG: the manual field if typed, else whatever the
-// common/region/zone pickers last set. Shared by the label update above
-// and the download handler below so the two can't drift.
+// Effective EPSG: manual field if typed or whatever is picked last.
 function currentEpsgValue() {
   const customEpsg = document.getElementById('custom-epsg').value.trim();
   return customEpsg !== '' ? customEpsg : String(selectedEpsg);
 }
 
-
 // ======== EXPORT / DOWNLOAD ========
-// File extension for each export format, alphabetized to match the
-// format-select dropdown and the backend's /export format handlers.
+// File extension for each export format and matched to the
+// format-select dropdown and backend's /export format handlers.
 const FORMAT_EXT = {
   csv:        f => `${f}.csv`,
   filegdb:    f => `${f}.zip`,
@@ -421,15 +411,12 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   const formData = new FormData();
   formData.append('format', format);
   formData.append('epsg', epsg);
-  // Only sent when non-empty; the backend treats a present, non-empty
-  // custom_crs as taking priority over the epsg field above.
+  // custom_crs takes priority over epsg when non-empty.
   if (customCrs) formData.append('custom_crs', customCrs);
   formData.append('source_path', document.getElementById('source-path').value.trim());
   formData.append('flight_altitude', document.getElementById('flight-altitude').value.trim());
   formData.append('altitude_unit', document.getElementById('altitude-unit').value);
-  // The backend uses this to name the file/layer *inside* multi-file
-  // formats (FileGDB, GeoPackage, Shapefile) — the rename below only
-  // renames the outer downloaded blob, which those insides don't see.
+  // The backend uses this to name layers inside multi-file formats (FileGDB, Shapefile).
   formData.append('export_name', baseName);
 
   const dlBtn = e.currentTarget;
@@ -447,8 +434,8 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
 
     const filename = (FORMAT_EXT[format] || (f => `${f}.${format}`))(baseName);
 
-    // The export arrives as a blob, not a URL, so trigger the download via
-    // a throwaway <a download> link rather than navigating the page.
+    // Trigger download via a throwaway <a download> link since the export
+    // is a blob, not a navigable URL.
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -465,7 +452,6 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
     dlBtn.textContent = 'Download';
   }
 });
-
 
 // ======== RESULTS LIST ========
 function populateResults(geojson) {
@@ -514,8 +500,7 @@ function removePhoto(filename, li) {
   }
   li.remove();
 
-  // Once the last photo is removed, hide the sections that only make sense
-  // when there's data to show or export.
+  // Hide sections when data can be shown or exported.
   if (mappedPhotos.length === 0) {
     document.getElementById('results-section').style.display = 'none';
     document.getElementById('export-section').style.display = 'none';
@@ -523,7 +508,6 @@ function removePhoto(filename, li) {
     statusEl.textContent = 'All photos removed. Ready for new upload.';
   }
 }
-
 
 // ======== CLEAR ALL ========
 clearBtn.addEventListener('click', () => {
@@ -536,18 +520,14 @@ clearBtn.addEventListener('click', () => {
   statusEl.textContent = 'Cleared. Ready for new upload.';
 });
 
-
 // ======== REFERENCE LAYERS ========
-
-// Shared popup body for both reference layers (UTM and State Plane): click
-// "Use for export" to set that zone's CRS directly from the map, instead of
-// hunting for it in the region search.
+// Click "Use for export" in a zone popup to set that zone's CRS directly
+// from the map.
 function setCrsForExport(epsg, name) {
   selectedEpsg = epsg;
   crsSelectedLabel.textContent = `Using: ${escapeHtml(name)} (EPSG:${epsg})`;
   document.getElementById('custom-epsg').value = epsg;
-  // Clear both CRS pickers (and any custom CRS text) so the EPSG field is
-  // the single source of truth for what's about to be exported.
+  // Clear all CRS pickers so the EPSG field is the single source of truth.
   commonCrsSelect.value = '';
   regionSelect.value = '';
   clearCustomCrs();
@@ -578,16 +558,15 @@ function zonePopupHtml(name, epsg, area) {
 }
 
 // ── UTM Zones ──
-// Generated client-side: every UTM zone is a simple 6-degree-wide rectangle
-// by definition, unlike State Plane's irregular, county-based borders,
-// which do need a server fetch.
+// UTM zones are simple 6° rectangles generated client-side, unlike State
+// Plane's irregular county-based borders which need a server fetch.
 function buildUtmLayer(datum) {
   const useNad83 = datum === 'nad83';
   const features = [];
   for (let z = 1; z <= 60; z++) {
     const w = -180 + (z - 1) * 6, e = w + 6;
-    // NAD83 northern zones only exist for zones 1-23 (North America coverage);
-    // higher zones and all southern-hemisphere zones fall back to WGS 84.
+    // NAD83 northern zones only exist for 1-23 (North America). Higher
+    // zones and southern hemisphere fall back to WGS 84.
     const nad83Available = useNad83 && z <= 23;
     const nEpsg = nad83Available ? 26900 + z : 32600 + z;
     const nName = nad83Available ? `NAD83 / UTM Zone ${z}N` : `WGS 84 / UTM Zone ${z}N`;
@@ -614,7 +593,7 @@ function buildUtmLayer(datum) {
 }
 
 // ── US State Plane Zones ──
-const SP_LABEL_ZOOM = 6; // show permanent (always-on) labels at or above this zoom level
+const SP_LABEL_ZOOM = 6; // show labels at or above this zoom level
 
 async function buildStatePlaneLayer() {
   const res = await fetch('/zone-geojson?type=state_plane');
@@ -627,7 +606,7 @@ async function buildStatePlaneLayer() {
     },
     onEachFeature(f, lyr) {
       const p = f.properties;
-      // Strip the datum prefix so the tooltip reads "Washington North"
+      // Strip datum prefix so tooltip reads "Washington North" not
       // instead of "NAD83(2011) / Washington North".
       const shortName = p.name.includes(' / ') ? p.name.split(' / ')[1] : p.name;
       lyr.bindTooltip(shortName, {
@@ -646,8 +625,8 @@ async function buildStatePlaneLayer() {
     },
   });
 
-  // Below SP_LABEL_ZOOM there isn't room for every label, so they only show
-  // on hover; at or above it, every zone gets a permanent label.
+  // Below SP_LABEL_ZOOM, labels only show on hover; above it, every zone
+  // gets a permanent label.
   function updateLabels() {
     const permanent = map.getZoom() >= SP_LABEL_ZOOM;
     layer.eachLayer(lyr => {
@@ -680,8 +659,7 @@ document.getElementById('layer-utm').addEventListener('change', function () {
 
 document.getElementById('utm-datum').addEventListener('change', function () {
   utmDatum = this.value;
-  // Rebuild (rather than mutate) the layer, since the datum choice changes
-  // every zone's EPSG code and name, not just its style.
+  // Rebuild the layer since datum changes every zone's EPSG code and name.
   if (document.getElementById('layer-utm').checked) {
     if (utmLayer) map.removeLayer(utmLayer);
     utmLayer = buildUtmLayer(utmDatum);
@@ -691,15 +669,13 @@ document.getElementById('utm-datum').addEventListener('change', function () {
 
 document.getElementById('layer-sp').addEventListener('change', async function () {
   if (this.checked) {
-    // Fetched once and cached in spLayer; toggling off and back on just
-    // re-adds the existing layer instead of re-fetching from the server.
+    // Fetched once and cached. Toggling off/on re-adds the existing layer.
     if (!spLayer) spLayer = await buildStatePlaneLayer();
     spLayer.addTo(map);
   } else if (spLayer) {
     map.removeLayer(spLayer);
   }
 });
-
 
 // ======== LIGHTBOX ========
 const lightbox = document.getElementById('lightbox');
@@ -721,8 +697,8 @@ function openLightbox(src) {
 
 function closeLightbox() {
   lightbox.style.display = 'none';
-  // removeAttribute rather than src = '': an empty string src can make some
-  // browsers re-request the current page as an "image".
+  // removeAttribute rather than src = '': empty src can make browsers
+  // re-request the current page as an "image".
   lightboxImg.removeAttribute('src');
   lbDragging = false;
 }
@@ -736,8 +712,7 @@ lightboxClose.addEventListener('click', e => {
   closeLightbox();
 });
 
-// Clicking the backdrop closes the lightbox; clicking the image must not
-// (that's how dragging starts), hence the target === stage check.
+// Clicking the backdrop closes the lightbox, and clicking the image must not
 lightboxStage.addEventListener('click', e => {
   if (e.target === lightboxStage) closeLightbox();
 });
@@ -768,8 +743,8 @@ lightboxImg.addEventListener('mousedown', e => {
   lightboxImg.classList.add('dragging');
 });
 
-// Drag tracking lives on `document`, not the image, so the drag continues
-// smoothly even if the cursor briefly leaves the image while moving fast.
+// Drag tracking on `document` so the drag continues even if the cursor
+// briefly leaves the image.
 document.addEventListener('mousemove', e => {
   if (!lbDragging) return;
   lbTx = lbDragTx + (e.clientX - lbDragStartX);
@@ -783,12 +758,9 @@ document.addEventListener('mouseup', () => {
   lightboxImg.classList.remove('dragging');
 });
 
-
 // ======== SOURCE PATH AUTO-SLASH ========
-// On blur, make sure the Photo Source field ends in a separator so the
-// backend can safely concatenate it with each filename. Separator style
-// (\ vs /) is inferred from what's already typed, so Windows paths keep
-// backslashes and URL/Unix paths keep forward slashes.
+// On blur, ensure the path ends in a separator so the backend can safely
+// concatenate it with each filename.
 document.getElementById('source-path').addEventListener('blur', function () {
   const val = this.value.trim();
   if (!val) { this.value = ''; return; }
@@ -798,7 +770,6 @@ document.getElementById('source-path').addEventListener('blur', function () {
     this.value = val;
   }
 });
-
 
 // ======== UTILITIES ========
 function escapeHtml(str) {
