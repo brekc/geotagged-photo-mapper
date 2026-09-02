@@ -317,7 +317,7 @@ async def crs_search(q: str = Query(default='')):
     q = q.strip()
     if len(q) < 2:
         raise HTTPException(status_code=400, detail='Query must be at least 2 characters')
-    # Expand abbreviations
+    # Expand abbreviations.
     term = STATE_ABBR.get(q.upper(), q)
 
     escaped = re.escape(term)
@@ -337,6 +337,8 @@ async def crs_search(q: str = Query(default='')):
     return output[:400]
 
 @app.post('/export')
+# Reproject cached photo points and return as a downloadable file.
+# custom_crs will take priority over epsg.
 async def export(
     format: str = Form(...),
     epsg: str = Form(default=''),
@@ -346,19 +348,10 @@ async def export(
     altitude_unit: str = Form(default='feet'),
     export_name: str = Form(default='photo_locations'),
 ):
-    """Reproject the cached photo points and stream them back as a file.
-
-    The target CRS comes from one of two places: a pasted/uploaded custom
-    CRS definition (custom_crs) if provided, otherwise a plain EPSG code
-    (epsg). custom_crs takes priority, matching how the frontend already
-    lets the manual EPSG field override the region/common CRS pickers.
-    """
+  
     fmt = format.lower()
 
-    # Same sanitization the frontend applies to the download filename,
-    # re-done here since this name also becomes the file/layer name *inside*
-    # multi-file formats (FileGDB, GeoPackage, Shapefile), which the
-    # frontend's client-side rename of the outer blob can't reach.
+    # Sanatize for an internal layer name.
     name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
     custom_crs = custom_crs.strip()
@@ -386,8 +379,7 @@ async def export(
     ]
     gdf = gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
 
-    # Source path: only add the column when a path was actually provided, so
-    # exports where the user left it blank don't get an empty column.
+    # Add source if a path is provided.
     clean_source = source_path.strip()
     if clean_source:
         if not clean_source.endswith(('/', '\\')):
@@ -395,17 +387,14 @@ async def export(
             clean_source += sep
         gdf['source'] = gdf['filename'].apply(lambda fn: clean_source + fn)
 
-    # Flight altitude: same "only add columns if provided" rule as source
-    # path above. Arrives as a plain string, not FastAPI's Optional[float],
-    # to avoid it turning an empty field into a validation error.
+    # Add altitude if provided.
     try:
         alt_val = float(flight_altitude) if flight_altitude.strip() else None
     except ValueError:
         alt_val = None
 
     if alt_val is not None:
-        # Only the unit actually entered gets written — not a converted
-        # value for the other, which would imply false precision.
+        # Only write the entered units.
         if altitude_unit == 'meters':
             gdf['flight_alt_m'] = round(alt_val, 1)
         else:
@@ -415,14 +404,10 @@ async def export(
 
     tmp_dir = tempfile.mkdtemp()
     try:
-        # Format handlers below are ordered alphabetically by format name to
-        # make a given format quick to find; they're independent of each
-        # other, so the order has no effect on behavior.
+        # Handlers for GIS file formats.
         if fmt == 'csv':
             csv_gdf = gdf.copy()
-            # Geographic CRS (like WGS 84) uses lon/lat; projected CRS (like
-            # a State Plane or UTM zone) uses easting/northing, since "lat/lon"
-            # would be a misleading label for coordinates in meters or feet.
+            # Label lat-lon for geographic CRS and easting-northing for projected.
             if target_crs.is_geographic:
                 csv_gdf['longitude'] = csv_gdf.geometry.x
                 csv_gdf['latitude'] = csv_gdf.geometry.y
@@ -439,8 +424,7 @@ async def export(
             )
 
         elif fmt == 'filegdb':
-            # A File Geodatabase is itself a directory of files, so it has to
-            # be zipped up before it can be sent as a single HTTP response.
+            # FileGDBs are directories and need zipped for download.
             gdb_path = os.path.join(tmp_dir, f'{name}.gdb')
             gdf.to_file(gdb_path, driver='OpenFileGDB', layer=name)
             zip_path = os.path.join(tmp_dir, f'{name}_gdb.zip')
@@ -481,8 +465,7 @@ async def export(
             )
 
         elif fmt == 'kml':
-            # The KML spec requires coordinates in WGS 84, so reproject to it
-            # regardless of what CRS the user picked for other formats.
+            # KML requires WGS 84 coordinates.
             kml_gdf = gdf.to_crs('EPSG:4326')
             out_path = os.path.join(tmp_dir, f'{name}.kml')
             kml_gdf.to_file(out_path, driver='KML')
@@ -495,9 +478,7 @@ async def export(
             )
 
         elif fmt == 'shapefile':
-            # A shapefile is really a set of sibling files (.shp/.shx/.dbf/
-            # .prj/.cpg) that all have to travel together, so like FileGDB
-            # above, it gets zipped before being returned.
+            # ZIP the shapefile and all supporting files.
             shp_dir = os.path.join(tmp_dir, 'shapefile')
             os.makedirs(shp_dir)
             shp_path = os.path.join(shp_dir, f'{name}.shp')
