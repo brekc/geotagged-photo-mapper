@@ -5,8 +5,7 @@
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
 
-// Three basemap choices, switchable from the layers control top-right.
-// OpenStreetMap is the default; the others are just alternate tile sources.
+// Three basemap choices and switchable from the layers control top-right.
 const basemaps = {
   'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -25,8 +24,8 @@ const basemaps = {
 basemaps['OpenStreetMap'].addTo(map);
 L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 
-// Photo markers live in their own layer group so they can all be cleared at
-// once (on re-upload or Clear All) without touching the reference layers.
+// Photo markers are in their own layer group so they can all be cleared
+// without touching the reference layers.
 const markerLayer = L.layerGroup().addTo(map);
 
 
@@ -44,14 +43,12 @@ const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clear-btn');
 
 let selectedFiles = [];
-// filename -> local blob URL, so popups and the results list can show
-// thumbnails without re-reading the file. Nothing leaves the browser until
-// Upload is clicked.
+// filename -> local blob URL for thumbnails. Photos do not leave the browser
+// until Upload is clicked.
 let photoURLs = new Map();
 
 function setFiles(files) {
-  // Revoke previous object URLs before replacing them, otherwise each new
-  // selection would leak the URLs from the last one for the life of the tab.
+  // Revoke previous object URLs to avoid leaking them from the session
   photoURLs.forEach(url => URL.revokeObjectURL(url));
   photoURLs = new Map();
 
