@@ -112,8 +112,8 @@ uploadBtn.addEventListener('click', async () => {
     plotGeoJSON(geojson);
     populateResults(geojson);
 
-    // The Export / Flight Details / Results sections stay hidden until there's
-    // at least one geotagged photo to act on.
+    // Show Export, Flight Details, and Results when there is at least
+    // one geotagged photo to act on.
     if (total_geotagged > 0) {
       document.getElementById('export-section').style.display = 'flex';
       document.getElementById('flight-details-section').style.display = 'flex';
@@ -145,15 +145,15 @@ function plotGeoJSON(geojson) {
     mappedPhotos.push({ filename: p.filename, lat, lon, marker });
   });
 
-  // Zoom/pan to fit every plotted photo. Wrapped in try/catch since
-  // fitBounds throws on an empty/invalid bounds (e.g. right after Clear All).
+  // Zoom/pan to fit every plotted photo. Use try/catch since
+  // fitBounds will have empty/invalid bounds.
   try {
     if (mappedPhotos.length > 0) {
       const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
     }
   } catch (_) {
-    // Nothing valid to fit to — fine.
+    // Nothing valid for — fine.
   }
 }
 
@@ -171,8 +171,8 @@ function buildMarker(p, lat, lon, imgUrl) {
   if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
   if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
 
-  // Only show a thumbnail if we still have this photo's blob URL — a fresh
-  // file selection clears photoURLs, so marker data can outlive its image.
+  // Only show a thumbnail if there is a blob URL. A fresh file selection
+  // clears photoURLs, so marker data can outlive its image.
   const imgTag = imgUrl
     ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
     : '';
@@ -208,10 +208,8 @@ let selectedEpsg = 4326; // default: WGS 84, matches the label below
 let allCrsResults = [];   // full unfiltered list of CRS results for the current region
 let activeUnits = 'meters';
 
-// Datum priority: lower = newer/preferred (null = non-US, always kept).
-// The "latest-datum filter" below uses this to collapse a zone's older
-// realizations (HARN, plain NAD83, etc.) to just the newest one, unless
-// "Show all datum realizations" is checked.
+// Datum priority: lower = newer/preferred. The filter below collapses a
+// zone's older realizations to just the newest, unless "Show all" is checked.
 const DATUM_PRIORITY = {
   'NAD83(2011)': 1, 'NAD83(2011)(IERS)': 1,
   'NAD83(NSRS2007)': 2, 'NAD83(PA11)': 2, 'NAD83(MA11)': 2,
@@ -221,9 +219,7 @@ const DATUM_PRIORITY = {
 };
 
 function parseCrs(name) {
-  // CRS names look like "NAD83(2011) / Washington North (ftUS)". Split on
-  // " / " for datum vs. zone, and strip the feet marker so zones group by
-  // base name regardless of units or datum.
+  // " / " for datum vs. zone; strip the feet marker so zones group by base name.
   const slash = name.indexOf(' / ');
   const datum = slash >= 0 ? name.slice(0, slash) : '';
   const zone = slash >= 0 ? name.slice(slash + 3) : name;
@@ -234,8 +230,7 @@ function parseCrs(name) {
 }
 
 function applyFilters(list) {
-  // 1. units filter: keep only meters, only feet, or everything, per the
-  // active toggle button.
+  // 1. units filter
   let filtered = list.filter(r => {
     const { isFeet } = parseCrs(r.name);
     if (activeUnits === 'meters') return !isFeet;
@@ -243,11 +238,10 @@ function applyFilters(list) {
     return true;
   });
 
-  // 2. latest-datum filter (skip if "show all" is checked): for each
-  // base zone + units combo, keep only the entry with the lowest datum
-  // priority. Non-US zones have no priority mapping and are kept as-is.
+  // 2. latest-datum filter (skip if "show all" is checked): per base zone,
+  //  keep only the entry with the lowest (newest) datum priority.
   if (!showAllDatumsChk.checked) {
-    const best = new Map(); // key: "baseZone|isFeet" -> best entry so far
+    const best = new Map();
     const nonUs = [];
     for (const r of filtered) {
       const { baseZone, isFeet, datumPriority } = parseCrs(r.name);
@@ -278,7 +272,7 @@ function renderCrsOptions() {
   crsOptionsSelect.disabled = false;
 }
 
-// Units toggle (Meters / Both / Feet buttons above the region CRS results).
+// Units toggle
 document.querySelectorAll('.toggle-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
@@ -293,16 +287,14 @@ showAllDatumsChk.addEventListener('change', renderCrsOptions);
 commonCrsSelect.addEventListener('change', () => {
   const code = parseInt(commonCrsSelect.value, 10);
   if (!code) {
-    // "-- Select --" was chosen again: fall back to letting the region
-    // picker be used instead.
+    // Fall back to letting the region picker be used.
     regionCrsSection.style.display = '';
     return;
   }
   const label = commonCrsSelect.options[commonCrsSelect.selectedIndex].text;
   selectedEpsg = code;
   crsSelectedLabel.textContent = `Using: ${label}`;
-  // Picking a common CRS resets the region picker and any custom CRS text,
-  // since only one CRS source should be "active" at a time.
+  // Only one CRS source should be "active" at a time.
   regionSelect.value = '';
   clearCustomCrs();
   allCrsResults = [];
@@ -324,8 +316,7 @@ regionSelect.addEventListener('change', async () => {
     return;
   }
 
-  // Picking a region resets the common CRS picker, mirroring the reset that
-  // commonCrsSelect does above.
+  // Picking a region resets the common CRS picker.
   commonCrsSelect.value = '';
   commonCrsSection.style.display = 'none';
   crsOptionsSelect.innerHTML = '<option value="">Loading...</option>';
@@ -355,16 +346,12 @@ crsOptionsSelect.addEventListener('change', () => {
   const label = crsOptionsSelect.options[crsOptionsSelect.selectedIndex].text;
   selectedEpsg = code;
   crsSelectedLabel.textContent = `Using: ${label}`;
-  // Picking a region CRS is also a definitive choice, so any leftover
-  // custom CRS text must not silently win at export time.
+  // Clear custom CRS so it doesn't silently win at export time.
   clearCustomCrs();
 });
 
-// ── Custom CRS (paste WKT/PROJ4, or upload a .prj file) ──
-// Highest-priority CRS source: a non-empty textarea at download time
-// overrides the EPSG field, which overrides the region/common pickers (see
-// the download handler below). Every other CRS-picking path must clear it
-// via clearCustomCrs(), or the export would silently keep using it.
+// Highest-priority CRS source: non-empty textarea at download time overrides
+// Highest-priority CRS source: non-empty textarea at download time overrides
 function clearCustomCrs() {
   customCrsInput.value = '';
   customCrsFile.value = '';
@@ -386,7 +373,7 @@ customCrsFile.addEventListener('change', () => {
 
 customCrsInput.addEventListener('input', updateCustomCrsLabel);
 
-// A manually typed EPSG code is also a definitive CRS choice.
+// A manually typed EPSG code is also a CRS choice.
 document.getElementById('custom-epsg').addEventListener('input', function () {
   if (this.value.trim() !== '') {
     customCrsInput.value = '';
@@ -400,8 +387,7 @@ function updateCustomCrsLabel() {
     crsSelectedLabel.textContent = 'Using: Custom CRS (pasted/uploaded)';
     return;
   }
-  // Textarea was cleared: fall back to whatever EPSG is currently selected,
-  // so the label doesn't keep claiming a custom CRS is active once it isn't.
+  // Textarea cleared: fall back to the currently selected EPSG.
   crsSelectedLabel.textContent = `Using: EPSG:${currentEpsgValue()}`;
 }
 
