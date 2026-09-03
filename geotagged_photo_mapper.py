@@ -37,15 +37,16 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 os.environ.setdefault('PROJ_USER_WRITABLE_DIRECTORY', os.path.join(_DATA_DIR, 'proj_cache'))
 
 # PROJ_LIB and PROJ_DATA can point to an incompatible system copy from a
-# PostgreSQL/PostGIS installation. Clear these to match the environment. 
+# PostgreSQL/PostGIS installation. Clear these to match the environment.
 os.environ.pop('PROJ_LIB', None)
 os.environ.pop('PROJ_DATA', None)
 
-import geopandas as gpd
-from pyproj import CRS
-from pyproj.database import query_crs_info
-from pyproj.enums import PJType
-from pyproj.network import set_network_enabled
+# These imports must come after the PROJ_LIB/PROJ_DATA cleanup above.
+import geopandas as gpd  # noqa: E402
+from pyproj import CRS  # noqa: E402
+from pyproj.database import query_crs_info  # noqa: E402
+from pyproj.enums import PJType  # noqa: E402
+from pyproj.network import set_network_enabled  # noqa: E402
 
 # Allow PROJ to download and cache the latest shift-grid files for
 # datum transformations (e.g. NAD83(HARN) -> NAD83(2011))
@@ -56,7 +57,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Cached /upload result for /export. This will handle one upload at a time,
-# meaning that subsequent uploads will replace what is in memory. 
+# meaning that subsequent uploads will replace what is in memory.
 cached_features: list = []
 
 # Load all projected EPSG CRS entries for /crs-search filtering.
@@ -72,6 +73,7 @@ except Exception:
 _SP_CSV_URL = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_plane_reference.csv'
 _COUNTIES_URL = 'https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_20m.zip'
 _sp_zones_cache: dict | None = None
+
 
 # Build US State Plane zones by joining a state plane reference CSV and the
 # Census Bureau's county boundaries. Dissolving by zone and caching the result
@@ -132,6 +134,7 @@ def _build_sp_zones(cache_path: str) -> dict:
         json.dump(result, f)
     return result
 
+
 # Return State Plane zone GeoJSON. Three cached layers will include
 # in-memory dict, on-disk file (data/state_plane_zones.geojson), and
 # a full build of _build_sp_zones() if neither exists.
@@ -146,6 +149,7 @@ def _get_sp_zones() -> dict:
         return _sp_zones_cache
     _sp_zones_cache = _build_sp_zones(cache_path)
     return _sp_zones_cache
+
 
 # Expand two-letter state and province codes to full names for CRS area-of-use matching.
 STATE_ABBR: dict[str, str] = {
@@ -173,12 +177,14 @@ STATE_ABBR: dict[str, str] = {
 # GPS extraction
 # ---------------------------------------------------------------------------
 
+
 # Return the first non-None value. Safer than `or` since 0.0 is valid.
 def _coalesce(*values):
     for v in values:
         if v is not None:
             return v
     return None
+
 
 # Extract GPS and camera metadata from photos via ExifTool. This will
 # return a list of dicts (one per geotagged photo).
@@ -195,10 +201,10 @@ def extract_gps(file_paths):
 
         if lat is None or lon is None:
             continue
-          
+
         lat = float(lat)
         lon = float(lon)
-        
+
         # Raw EXIF tags are unsigned; apply Ref tag sign if used.
         if composite_lat is None and meta.get('EXIF:GPSLatitudeRef', '').upper() == 'S':
             lat = -abs(lat)
@@ -227,6 +233,7 @@ def extract_gps(file_paths):
 # GeoJSON builder
 # ---------------------------------------------------------------------------
 
+
 # Convert extract_gps() dicts to a GeoJSON FeatureCollection string. Lat and Lon
 # will become point geometry, and the remaining fields will become properties
 # the frontend reads to build popups.
@@ -243,7 +250,8 @@ def build_geojson(features):
 # Custom CRS parsing
 # ---------------------------------------------------------------------------
 
-# Parse a WKT, PROJ4, or authority string into a CRS. Falls back to from_wkt() for 
+
+# Parse a WKT, PROJ4, or authority string into a CRS. Falls back to from_wkt() for
 # ESRI .prj files that from_user_input() can not classify.
 def _parse_custom_crs(text: str) -> CRS:
     text = text.strip()
@@ -263,9 +271,11 @@ def _parse_custom_crs(text: str) -> CRS:
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.get('/')
 async def index(request: Request):
     return templates.TemplateResponse(request, 'geotagged-photo-mapper.html')
+
 
 @app.post('/upload')
 async def upload(
@@ -303,13 +313,15 @@ async def upload(
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+
 @app.get('/zone-geojson')
-# Return State Plane zone polygons. UTM zones are generated through the frontend 
+# Return State Plane zone polygons. UTM zones are generated through the frontend
 # with buildUtmLayer().
 def zone_geojson(zone_type: str = Query(..., alias='type')):
     if zone_type != 'state_plane':
         raise HTTPException(status_code=400, detail='type must be state_plane')
     return _get_sp_zones()
+
 
 @app.get('/crs-search')
 # Search projected CRS entries by area-of-use name for the Region dropdown.
@@ -336,6 +348,7 @@ async def crs_search(q: str = Query(default='')):
     output.sort(key=lambda x: x['name'])
     return output[:400]
 
+
 @app.post('/export')
 # Reproject cached photo points and return as a downloadable file.
 # custom_crs will take priority over epsg.
@@ -348,10 +361,9 @@ async def export(
     altitude_unit: str = Form(default='feet'),
     export_name: str = Form(default='photo_locations'),
 ):
-  
     fmt = format.lower()
 
-    # Sanatize for an internal layer name.
+    # Sanitize for an internal layer name.
     name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
     custom_crs = custom_crs.strip()
@@ -465,10 +477,12 @@ async def export(
             )
 
         elif fmt == 'kml':
-            # KML requires WGS 84 coordinates.
+            # KML requires WGS 84 coordinates and the LIBKML driver to maintain gdf formatting.
             kml_gdf = gdf.to_crs('EPSG:4326')
+            kml_gdf = kml_gdf.copy()
+            kml_gdf['Name'] = kml_gdf['filename']
             out_path = os.path.join(tmp_dir, f'{name}.kml')
-            kml_gdf.to_file(out_path, driver='KML')
+            kml_gdf.to_file(out_path, driver='LIBKML')
             with open(out_path, 'rb') as fh:
                 content = fh.read()
             return Response(

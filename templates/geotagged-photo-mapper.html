@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/geotagged-photo-mapper.css" />
+  <link rel="stylesheet" href="/static/css/geotagged-photo-mapper.css">
 </head>
 <body>
 <div id="app">
@@ -34,7 +34,7 @@
         </div>
         <input id="file-input" type="file" accept="image/*" multiple hidden>
 
-        <button id="upload-btn" disabled>Upload &amp; Map</button>
+        <button id="upload-btn" type="button" disabled>Upload &amp; Map</button>
         <div id="status">No files selected.</div>
       </div>
 
@@ -42,7 +42,7 @@
       <div class="section" id="results-section">
         <div class="section-header">Geotagged Photos</div>
         <ul id="results-list"></ul>
-        <button id="clear-btn">Clear All</button>
+        <button id="clear-btn" type="button">Clear All</button>
       </div>
 
       <!-- Flight Details section -->
@@ -179,9 +179,9 @@
             <div class="crs-filter-row">
               <label>Units</label>
               <div class="toggle-group">
-                <button class="toggle-btn active" data-units="meters">Meters</button>
-                <button class="toggle-btn" data-units="both">Both</button>
-                <button class="toggle-btn" data-units="feet">Feet</button>
+                <button class="toggle-btn active" type="button" data-units="meters">Meters</button>
+                <button class="toggle-btn" type="button" data-units="both">Both</button>
+                <button class="toggle-btn" type="button" data-units="feet">Feet</button>
               </div>
             </div>
             <label class="checkbox-label">
@@ -232,7 +232,7 @@
           </div>
         </div>
 
-        <button id="download-btn">Download</button>
+        <button id="download-btn" type="button">Download</button>
       </div>
 
       <!-- Reference layers -->
@@ -262,7 +262,7 @@
 
 <!-- Lightbox overlay -->
 <div id="lightbox">
-  <button id="lightbox-close">Close</button>
+  <button id="lightbox-close" type="button">Close</button>
   <div id="lightbox-stage">
     <!-- No src by default: empty src="" can make browsers re-request the
          page as an "image". JS sets .src before this is shown (openLightbox). -->

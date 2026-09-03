@@ -1,6 +1,6 @@
 /* exported openLightbox, setCrsForExport */
-// Called from onclick="" attributes in HTML strings this file builds itself
-// (photo popups and zone popups), not from anywhere a linter can see.
+// Called from onclick="" attributes in HTML strings to builds itself
+// and enable linting.
 
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
@@ -142,14 +142,14 @@ function plotGeoJSON(geojson) {
   });
 
   // Zoom/pan to fit every plotted photo. Use try/catch since
-  // fitBounds will have empty/invalid bounds.
+  // fitBounds may get empty/invalid bounds.
   try {
     if (mappedPhotos.length > 0) {
       const bounds = L.latLngBounds(mappedPhotos.map(ph => [ph.lat, ph.lon]));
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
     }
   } catch (_) {
-    // Nothing valid for — fine.
+    // Nothing valid to fit — fine.
   }
 }
 
