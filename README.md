@@ -16,7 +16,7 @@ The full-featured Python app (export, CRS picker, etc.) requires the local/Docke
 
 ## Local & Private
 
-This app runs as a **local web server**, with no account or login required. Open the URL it prints (usually `http://localhost:8000`) in any browser on the same machine, or share the address with other devices on the same network. Photos are loaded into memory during processing and are never written to disk or sent to any external server. The only outbound connections are basemap tile requests to OpenStreetMap, CartoDB, or USGS.
+This app runs as a **local web server**, with no account or login required. Open the URL it prints (usually `http://localhost:8000`) in any browser on the same machine, or share the address with other devices on the same network. Photos are loaded into memory during processing and are never written to disk or sent to any external server. The only outbound connections are basemap tile requests to OpenStreetMap, Esri, or USGS.
 
 ---
 
@@ -147,7 +147,7 @@ The server exposes four data endpoints:
 A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 - Drag-and-drop or click-to-browse photo upload
-- Leaflet map with selectable basemaps (OpenStreetMap, CartoDB Voyager, USGS Imagery + Topo)
+- Leaflet map with selectable basemaps (OpenStreetMap, Esri Light Gray, USGS Imagery + Topo)
 - Export panel: format selector, CRS picker (common presets, region search, or manual EPSG override), optional Photo Source and Flight Altitude AGL fields
 - Reference layer toggles for UTM Zones and US State Plane Zones; clicking a zone polygon sets its CRS for export
 - Photo popups with thumbnail previews and a zoom/pan lightbox
@@ -198,7 +198,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 | **[Shapely](https://shapely.readthedocs.io/)** | Point geometry creation |
 | **[pyproj](https://pyproj4.github.io/pyproj/)** | CRS database search |
 | **[Leaflet.js](https://leafletjs.com/)** | Interactive map (CDN) |
-| **[OpenStreetMap](https://www.openstreetmap.org/) / [CartoDB](https://carto.com/basemaps/) / [USGS](https://basemap.nationalmap.gov/)** | Basemap tile options (no API key required) |
+| **[OpenStreetMap](https://www.openstreetmap.org/) / [Esri](https://www.esri.com/en-us/arcgis/products/arcgis-living-atlas/services/basemaps) / [USGS](https://basemap.nationalmap.gov/)** | Basemap tile options (no API key required) |
 
 Python dependencies are managed via Conda (`environment.yml`) or pip (`requirements.txt`).
 
