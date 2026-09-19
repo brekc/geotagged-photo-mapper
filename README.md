@@ -218,7 +218,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Oriented Imagery Export**
 
-After a successful upload, "Build Oriented Imagery" builds an [Esri Oriented Imagery table](https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
+After a successful upload, "Build Oriented Imagery" builds an oriented imagery table from the mapped photos. It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
 
 - **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Only JPEG/JPG/TIF are referenced; PNG/HEIC/HEIF are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
 - **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
