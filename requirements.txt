@@ -3,6 +3,8 @@ uvicorn[standard]
 python-multipart
 jinja2
 PyExifTool
+Pillow
+pillow-heif
 pandas
 geopandas
 shapely
