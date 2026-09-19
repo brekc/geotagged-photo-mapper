@@ -5,6 +5,10 @@ __pycache__/
 *.tmp
 .env
 
+# Test/lint tool caches
+.pytest_cache/
+.ruff_cache/
+
 # Virtual environments
 venv/
 .venv/
