@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY geotagged_photo_mapper.py .
+COPY geotagged_photo_mapper.py oriented_imagery.py upload_sessions.py ./
 COPY templates/ templates/
 COPY static/ static/
 
