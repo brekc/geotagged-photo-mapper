@@ -5,6 +5,9 @@ __pycache__/
 *.tmp
 .env
 
+# Test suite kept local-only; repo should reflect a finished, downloadable app
+/tests/
+
 # Test/lint tool caches
 .pytest_cache/
 .ruff_cache/
@@ -31,3 +34,4 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+tests/
