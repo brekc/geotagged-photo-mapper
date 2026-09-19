@@ -32,7 +32,7 @@
           Drag &amp; drop photos here<br>
           or <strong style="color:#0284c7">click to browse</strong>
         </div>
-        <input id="file-input" type="file" accept="image/*" multiple hidden>
+        <input id="file-input" type="file" accept="image/*,.heic,.heif" multiple hidden>
 
         <button id="upload-btn" type="button" disabled>Upload &amp; Map</button>
         <div id="status">No files selected.</div>
@@ -42,6 +42,7 @@
       <div class="section" id="results-section">
         <div class="section-header">Geotagged Photos</div>
         <ul id="results-list"></ul>
+        <button id="oi-open-btn" type="button" class="secondary-btn">Build Oriented Imagery</button>
         <button id="clear-btn" type="button">Clear All</button>
       </div>
 
@@ -269,6 +270,80 @@
     <img id="lightbox-img" alt="Full size photo">
   </div>
   <div id="lightbox-hint">Scroll to zoom &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Double-click to reset</div>
+</div>
+
+<!-- Oriented Imagery modal -->
+<div id="oi-modal" role="dialog" aria-modal="true" aria-labelledby="oi-modal-title" hidden>
+  <div id="oi-modal-backdrop"></div>
+  <div id="oi-modal-panel" tabindex="-1">
+    <div id="oi-modal-header">
+      <h2 id="oi-modal-title">Build Oriented Imagery</h2>
+      <button id="oi-modal-close" type="button" aria-label="Close">&times;</button>
+    </div>
+
+    <div id="oi-modal-body">
+      <p class="oi-notice">Different cameras expose different metadata. Missing values are left blank and are not inferred.</p>
+
+      <div class="oi-field">
+        <div class="section-header">Metadata Completeness</div>
+        <div id="oi-summary" aria-live="polite">Loading&hellip;</div>
+      </div>
+
+      <div class="oi-field">
+        <label for="oi-type-select">Oriented Imagery Type <span class="oi-required">(required)</span></label>
+        <select id="oi-type-select">
+          <option value="">-- Select --</option>
+          <option value="Horizontal">Horizontal</option>
+          <option value="Oblique">Oblique</option>
+          <option value="Nadir">Nadir</option>
+          <option value="360">360</option>
+          <option value="Inspection">Inspection</option>
+        </select>
+      </div>
+
+      <div class="oi-field">
+        <label id="oi-mode-label">Export Mode</label>
+        <div class="oi-mode-toggle" role="radiogroup" aria-labelledby="oi-mode-label">
+          <button type="button" class="toggle-btn active" data-mode="reference" role="radio" aria-checked="true">Reference existing images</button>
+          <button type="button" class="toggle-btn" data-mode="portable" role="radio" aria-checked="false">Portable package (ZIP)</button>
+        </div>
+      </div>
+
+      <div id="oi-reference-fields">
+        <div class="oi-field">
+          <label for="oi-base-location">Image base location</label>
+          <input id="oi-base-location" type="text" placeholder="C:\Photos\project\, \\server\share\photos\, or https://example.com/photos/">
+          <div class="oi-hint">Local path, UNC path, or http(s) URL. Only JPEG/JPG/TIF images are referenced here; PNG/HEIC/HEIF are excluded.</div>
+        </div>
+        <button id="oi-preview-btn" type="button" class="secondary-btn">Preview resolved paths</button>
+        <div id="oi-preview-output" aria-live="polite"></div>
+      </div>
+
+      <div id="oi-portable-fields" hidden>
+        <p class="oi-hint">Re-converts JPEG/PNG/HEIC/HEIF photos to orientation-normalized JPEG derivatives and packages oriented_imagery.csv, manifest.json, README.txt, and images/ into a ZIP.</p>
+      </div>
+
+      <div class="oi-field">
+        <label for="oi-export-name">Export Filename</label>
+        <input id="oi-export-name" type="text" placeholder="oriented_imagery">
+      </div>
+
+      <div class="oi-field">
+        <div class="section-header">Current CRS</div>
+        <div id="oi-crs-summary" class="oi-hint"></div>
+      </div>
+
+      <div id="oi-privacy-notice">
+        Portable-mode image derivatives have EXIF, XMP, GPS, thumbnail, and device-serial metadata removed.
+        The CSV and manifest carry the authoritative location and camera fields instead. Reference mode never
+        uploads or reads your image files -- only the base location text is sent.
+      </div>
+
+      <div id="oi-row-status" aria-live="polite"></div>
+
+      <button id="oi-download-btn" type="button">Download</button>
+    </div>
+  </div>
 </div>
 
 <script src="/static/js/geotagged-photo-mapper.js"></script>
