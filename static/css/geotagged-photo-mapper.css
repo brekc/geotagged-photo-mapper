@@ -340,6 +340,15 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   border-color: #fca5a5;
 }
 
+/* ── Secondary buttons (e.g. Build Oriented Imagery) ── */
+.secondary-btn {
+  background: #e2e8f0;
+  color: #1e293b;
+  margin-top: 4px;
+}
+
+.secondary-btn:hover { background: #cbd5e1; }
+
 /* ── Clear All button ── */
 #clear-btn {
   background: #dc2626;
@@ -348,6 +357,151 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 #clear-btn:hover { background: #b91c1c; }
+
+/* ── Oriented Imagery modal ── */
+#oi-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The [hidden] attribute selector has lower specificity than the #oi-modal
+   id selector above, so without this rule "display: flex" would win and the
+   modal would stay interactive (and intercept clicks) even while hidden. */
+#oi-modal[hidden] {
+  display: none;
+}
+
+#oi-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(15 23 42 / 55%);
+}
+
+#oi-modal-panel {
+  position: relative;
+  background: #fff;
+  border-radius: 10px;
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
+  outline: none;
+}
+
+#oi-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#oi-modal-header h2 {
+  font-size: 17px;
+  color: #0f172a;
+}
+
+#oi-modal-close {
+  width: auto;
+  background: transparent;
+  color: #64748b;
+  font-size: 22px;
+  line-height: 1;
+  padding: 2px 8px;
+}
+
+#oi-modal-close:hover { background: #f1f5f9; }
+
+#oi-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.oi-notice {
+  font-size: 13px;
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+.oi-field { display: flex; flex-direction: column; gap: 6px; }
+
+.oi-required { color: #dc2626; font-weight: 600; font-size: 12px; }
+
+.oi-hint {
+  font-size: 12.5px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.oi-mode-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.oi-mode-toggle .toggle-btn { flex: 1; }
+
+#oi-summary {
+  font-size: 13px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  line-height: 1.6;
+}
+
+#oi-preview-output {
+  font-size: 12.5px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 140px;
+  overflow-y: auto;
+  word-break: break-all;
+  display: none;
+}
+
+#oi-preview-output.visible { display: block; }
+
+#oi-privacy-notice {
+  font-size: 12.5px;
+  color: #0369a1;
+  background: rgb(2 132 199 / 8%);
+  border: 1px solid rgb(2 132 199 / 25%);
+  border-radius: 6px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+#oi-row-status {
+  font-size: 13px;
+  color: #475569;
+  min-height: 18px;
+}
+
+#oi-row-status.oi-error { color: #dc2626; }
+
+#oi-download-btn {
+  background: #059669;
+  color: #fff;
+}
+
+#oi-download-btn:hover { background: #047857; }
+
+#oi-download-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 
 /* ── Photo popup ── */

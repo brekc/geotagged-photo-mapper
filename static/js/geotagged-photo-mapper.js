@@ -31,7 +31,31 @@ const markerLayer = L.layerGroup().addTo(map);
 // ======== STATE ========
 // One entry per photo currently on the map, so the results list and the
 // remove/clear buttons can find and remove the matching marker.
-let mappedPhotos = []; // { filename, lat, lon, marker }
+let mappedPhotos = []; // { filename, lat, lon, marker, row_id }
+
+// Opaque id for this tab's current upload session (see upload_sessions.py).
+// Every export/Oriented Imagery call must send it; the server refuses to
+// serve another tab's/user's data without a match.
+let currentUploadId = null;
+
+function visibleRowIds() {
+  return mappedPhotos.map(p => p.row_id).filter(Boolean);
+}
+
+// Best-effort session cleanup. Uses sendBeacon (fire-and-forget, survives
+// page unload) when available so Clear All / picking a new file batch /
+// closing the tab don't leave sessions around for their full 15-minute TTL.
+function closeSession(uploadId) {
+  if (!uploadId) return;
+  const url = `/session/${encodeURIComponent(uploadId)}/close`;
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(url, new Blob());
+  } else {
+    fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+  }
+}
+
+window.addEventListener('pagehide', () => closeSession(currentUploadId));
 
 // ======== FILE HANDLING ========
 const dropZone = document.getElementById('drop-zone');
@@ -45,13 +69,22 @@ let selectedFiles = [];
 // until Upload is clicked.
 let photoURLs = new Map();
 
+// Some browsers/OSes report no useful Content-Type for HEIC/HEIF (often
+// "" or "application/octet-stream"), so fall back to the extension.
+function isSupportedImage(f) {
+  if (f.type && f.type.startsWith('image/')) return true;
+  return /\.(jpe?g|png|heic|heif)$/i.test(f.name || '');
+}
+
 function setFiles(files) {
   // Revoke previous object URLs to avoid leaking them from the session
-  photoURLs.forEach(url => URL.revokeObjectURL(url));
+  photoURLs.forEach(url => { if (url.startsWith('blob:')) URL.revokeObjectURL(url); });
   photoURLs = new Map();
 
-  selectedFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+  selectedFiles = Array.from(files).filter(isSupportedImage);
   selectedFiles.forEach(f => {
+    // HEIC/HEIF blob URLs won't render in most browsers' <img> tags; the
+    // server-generated preview from /upload replaces these afterward.
     photoURLs.set(f.name, URL.createObjectURL(f));
   });
 
@@ -90,6 +123,10 @@ uploadBtn.addEventListener('click', async () => {
   uploadBtn.disabled = true;
   statusEl.textContent = 'Uploading and extracting GPS data...';
 
+  // A new upload replaces this tab's dataset; let the old session expire
+  // immediately instead of lingering for its full TTL.
+  const previousUploadId = currentUploadId;
+
   const formData = new FormData();
   selectedFiles.forEach(f => formData.append('photos', f));
 
@@ -103,18 +140,37 @@ uploadBtn.addEventListener('click', async () => {
       return;
     }
 
-    const { geojson, total_uploaded, total_geotagged } = data;
-    statusEl.textContent = `${total_geotagged} of ${total_uploaded} photo${total_uploaded !== 1 ? 's' : ''} had GPS data.`;
+    const { geojson, total_uploaded, total_geotagged, upload_id, previews, errors } = data;
+    currentUploadId = upload_id;
+    closeSession(previousUploadId);
+
+    // Server-rendered previews (HEIC/HEIF) replace the unreliable client
+    // blob URL for those filenames; JPEG/PNG keep their existing blob URL.
+    if (previews) {
+      Object.entries(previews).forEach(([filename, dataUri]) => {
+        const existing = photoURLs.get(filename);
+        if (existing && existing.startsWith('blob:')) URL.revokeObjectURL(existing);
+        photoURLs.set(filename, dataUri);
+      });
+    }
+
+    let statusMsg = `${total_geotagged} of ${total_uploaded} photo${total_uploaded !== 1 ? 's' : ''} had GPS data.`;
+    if (errors && errors.length) {
+      statusMsg += ` ${errors.length} file${errors.length !== 1 ? 's' : ''} had issues (see console for details).`;
+      console.warn('Upload issues:', errors);
+    }
+    statusEl.textContent = statusMsg;
 
     plotGeoJSON(geojson);
     populateResults(geojson);
 
-    // Show Export, Flight Details, and Results when there is at least
-    // one geotagged photo to act on.
+    // Show Export, Flight Details, Results, and Oriented Imagery when there
+    // is at least one geotagged photo to act on.
     if (total_geotagged > 0) {
       document.getElementById('export-section').style.display = 'flex';
       document.getElementById('flight-details-section').style.display = 'flex';
       document.getElementById('results-section').style.display = 'flex';
+      document.getElementById('oi-open-btn').style.display = '';
     }
   } catch (err) {
     statusEl.textContent = `Network error: ${err.message}`;
@@ -138,7 +194,7 @@ function plotGeoJSON(geojson) {
     const imgUrl = photoURLs.get(p.filename);
     const marker = buildMarker(p, lat, lon, imgUrl);
     markerLayer.addLayer(marker);
-    mappedPhotos.push({ filename: p.filename, lat, lon, marker });
+    mappedPhotos.push({ filename: p.filename, lat, lon, marker, row_id: p.row_id });
   });
 
   // Zoom/pan to fit every plotted photo. Use try/catch since
@@ -408,8 +464,15 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   const customCrs = customCrsInput.value.trim();
   const baseName = document.getElementById('export-name').value.trim().replace(/[\\/:*?"<>|]/g, '_') || 'photo_locations';
 
+  if (!currentUploadId) {
+    alert('Upload photos first.');
+    return;
+  }
+
   const formData = new FormData();
   formData.append('format', format);
+  formData.append('upload_id', currentUploadId);
+  formData.append('row_ids', visibleRowIds().join(','));
   formData.append('epsg', epsg);
   // custom_crs takes priority over epsg when non-empty.
   if (customCrs) formData.append('custom_crs', customCrs);
@@ -517,6 +580,9 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('results-section').style.display = 'none';
   document.getElementById('export-section').style.display = 'none';
   document.getElementById('flight-details-section').style.display = 'none';
+  closeOrientedImageryModal();
+  closeSession(currentUploadId);
+  currentUploadId = null;
   statusEl.textContent = 'Cleared. Ready for new upload.';
 });
 
@@ -768,6 +834,239 @@ document.getElementById('source-path').addEventListener('blur', function () {
     this.value = val + (val.includes('\\') ? '\\' : '/');
   } else {
     this.value = val;
+  }
+});
+
+// ======== ORIENTED IMAGERY ========
+const oiModal = document.getElementById('oi-modal');
+const oiModalPanel = document.getElementById('oi-modal-panel');
+const oiOpenBtn = document.getElementById('oi-open-btn');
+const oiCloseBtn = document.getElementById('oi-modal-close');
+const oiTypeSelect = document.getElementById('oi-type-select');
+const oiModeButtons = document.querySelectorAll('.oi-mode-toggle .toggle-btn');
+const oiReferenceFields = document.getElementById('oi-reference-fields');
+const oiPortableFields = document.getElementById('oi-portable-fields');
+const oiBaseLocation = document.getElementById('oi-base-location');
+const oiPreviewBtn = document.getElementById('oi-preview-btn');
+const oiPreviewOutput = document.getElementById('oi-preview-output');
+const oiExportName = document.getElementById('oi-export-name');
+const oiCrsSummary = document.getElementById('oi-crs-summary');
+const oiRowStatus = document.getElementById('oi-row-status');
+const oiDownloadBtn = document.getElementById('oi-download-btn');
+const oiSummary = document.getElementById('oi-summary');
+
+let oiMode = 'reference';
+let oiPreviouslyFocused = null;
+
+function setOiRowStatus(msg, isError) {
+  oiRowStatus.textContent = msg || '';
+  oiRowStatus.classList.toggle('oi-error', !!isError);
+}
+
+// Elements a keyboard user can reach, for the modal's Tab focus trap.
+function oiFocusableElements() {
+  return Array.from(oiModalPanel.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )).filter(el => !el.disabled && el.offsetParent !== null);
+}
+
+function oiKeydownHandler(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeOrientedImageryModal();
+    return;
+  }
+  if (e.key === 'Tab') {
+    const focusable = oiFocusableElements();
+    if (focusable.length === 0) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+function openOrientedImageryModal() {
+  if (!currentUploadId || mappedPhotos.length === 0) {
+    alert('Upload geotagged photos first.');
+    return;
+  }
+  oiPreviouslyFocused = document.activeElement;
+  oiModal.hidden = false;
+  oiCrsSummary.textContent = crsSelectedLabel.textContent;
+  oiPreviewOutput.classList.remove('visible');
+  oiPreviewOutput.innerHTML = '';
+  setOiRowStatus('');
+  oiModalPanel.focus();
+  loadOiPreflight();
+  document.addEventListener('keydown', oiKeydownHandler);
+}
+
+function closeOrientedImageryModal() {
+  if (oiModal.hidden) return;
+  oiModal.hidden = true;
+  document.removeEventListener('keydown', oiKeydownHandler);
+  if (oiPreviouslyFocused && typeof oiPreviouslyFocused.focus === 'function') {
+    oiPreviouslyFocused.focus();
+  }
+}
+
+oiOpenBtn.addEventListener('click', openOrientedImageryModal);
+oiCloseBtn.addEventListener('click', closeOrientedImageryModal);
+document.getElementById('oi-modal-backdrop').addEventListener('click', closeOrientedImageryModal);
+
+oiModeButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    oiMode = btn.dataset.mode;
+    oiModeButtons.forEach(b => {
+      const active = b === btn;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-checked', String(active));
+    });
+    oiReferenceFields.hidden = oiMode !== 'reference';
+    oiPortableFields.hidden = oiMode !== 'portable';
+    setOiRowStatus('');
+  });
+});
+
+async function loadOiPreflight() {
+  oiSummary.textContent = 'Loading…';
+  try {
+    const formData = new FormData();
+    formData.append('upload_id', currentUploadId);
+    formData.append('row_ids', visibleRowIds().join(','));
+    const res = await fetch('/oriented-imagery/preflight', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      oiSummary.textContent = `Error: ${data.detail || res.statusText}`;
+      return;
+    }
+    oiSummary.innerHTML = [
+      `Total: ${data.total_files}`,
+      `Valid GPS: ${data.valid_gps}`,
+      `Acquisition date: ${data.acquisition_date_available}`,
+      `True heading: ${data.true_heading_available}`,
+      `Focal length: ${data.focal_length_available}`,
+      `Approx. FOV: ${data.approximate_fov_available}`,
+      `Advanced pose: ${data.advanced_pose_available}`,
+      `Needs conversion: ${data.files_requiring_conversion}`,
+      `Excluded: ${data.excluded_files}`,
+      `Warnings: ${data.warnings}`,
+    ].map(escapeHtml).join(' &middot; ');
+  } catch (err) {
+    oiSummary.textContent = `Network error: ${err.message}`;
+  }
+}
+
+oiPreviewBtn.addEventListener('click', async () => {
+  if (!oiTypeSelect.value) {
+    setOiRowStatus('Select an Oriented Imagery Type first.', true);
+    return;
+  }
+  const base = oiBaseLocation.value.trim();
+  if (!base) {
+    setOiRowStatus('Enter a base location first.', true);
+    return;
+  }
+  oiPreviewBtn.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append('upload_id', currentUploadId);
+    formData.append('row_ids', visibleRowIds().join(','));
+    formData.append('base_location', base);
+    formData.append('oriented_imagery_type', oiTypeSelect.value);
+    formData.append('epsg', currentEpsgValue());
+    if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
+
+    const res = await fetch('/oriented-imagery/reference-preview', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      setOiRowStatus(`Error: ${data.detail || res.statusText}`, true);
+      return;
+    }
+    const lines = (data.preview_paths || []).map(escapeHtml).join('<br>');
+    oiPreviewOutput.innerHTML = `
+      <strong>${data.row_count} image${data.row_count !== 1 ? 's' : ''} would be included</strong>${data.excluded_count ? `, ${data.excluded_count} excluded` : ''}.<br>
+      ${lines || '(no images matched)'}<br><br>
+      <em>${escapeHtml(data.note || '')}</em>
+    `;
+    oiPreviewOutput.classList.add('visible');
+    setOiRowStatus('');
+  } catch (err) {
+    setOiRowStatus(`Network error: ${err.message}`, true);
+  } finally {
+    oiPreviewBtn.disabled = false;
+  }
+});
+
+oiDownloadBtn.addEventListener('click', async () => {
+  if (!oiTypeSelect.value) {
+    setOiRowStatus('Select an Oriented Imagery Type first.', true);
+    return;
+  }
+  const exportName = oiExportName.value.trim().replace(/[\\/:*?"<>|]/g, '_') || 'oriented_imagery';
+  oiDownloadBtn.disabled = true;
+  setOiRowStatus('Building…');
+
+  try {
+    let res;
+    if (oiMode === 'reference') {
+      const base = oiBaseLocation.value.trim();
+      if (!base) {
+        setOiRowStatus('Enter a base location first.', true);
+        return;
+      }
+      const formData = new FormData();
+      formData.append('upload_id', currentUploadId);
+      formData.append('row_ids', visibleRowIds().join(','));
+      formData.append('base_location', base);
+      formData.append('oriented_imagery_type', oiTypeSelect.value);
+      formData.append('epsg', currentEpsgValue());
+      if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
+      formData.append('export_name', exportName);
+      res = await fetch('/oriented-imagery/reference', { method: 'POST', body: formData });
+    } else {
+      const visibleNames = new Set(mappedPhotos.map(p => p.filename));
+      const filesToRepost = selectedFiles.filter(f => visibleNames.has(f.name));
+      if (filesToRepost.length === 0) {
+        setOiRowStatus('No currently-mapped photos are available to repost. Upload again if the page was reloaded.', true);
+        return;
+      }
+      const formData = new FormData();
+      formData.append('upload_id', currentUploadId);
+      formData.append('oriented_imagery_type', oiTypeSelect.value);
+      formData.append('epsg', currentEpsgValue());
+      if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
+      formData.append('export_name', exportName);
+      filesToRepost.forEach(f => formData.append('photos', f));
+      res = await fetch('/oriented-imagery/portable', { method: 'POST', body: formData });
+    }
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setOiRowStatus(`Error: ${data.detail || res.statusText}`, true);
+      return;
+    }
+
+    const blob = await res.blob();
+    const ext = oiMode === 'reference' ? 'csv' : 'zip';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${exportName}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setOiRowStatus('Download complete.');
+  } catch (err) {
+    setOiRowStatus(`Network error: ${err.message}`, true);
+  } finally {
+    oiDownloadBtn.disabled = false;
   }
 });
 

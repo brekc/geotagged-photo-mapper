@@ -13,13 +13,16 @@ Nothing is written to disk except the temporary files needed to build each
 export and the State Plane zone cache described below.
 """
 
+import base64
 import io
 import json
+import math
 import os
 import re
 import shutil
 import tempfile
 import urllib.request
+import uuid
 import zipfile
 from typing import List
 
@@ -29,7 +32,15 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from PIL import Image, ImageOps
 from shapely.geometry import Point
+
+import pillow_heif
+import upload_sessions
+
+# Register HEIC/HEIF support before any Pillow Image.open() call so .heic and
+# .heif uploads decode like any other Pillow-supported format.
+pillow_heif.register_heif_opener()
 
 # Set PROJ grid cache before importing. This will preserve the grid cache
 # following container restarts.
@@ -55,10 +66,6 @@ set_network_enabled(True)
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-# Cached /upload result for /export. This will handle one upload at a time,
-# meaning that subsequent uploads will replace what is in memory.
-cached_features: list = []
 
 # Load all projected EPSG CRS entries for /crs-search filtering.
 try:
@@ -174,7 +181,98 @@ STATE_ABBR: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# GPS extraction
+# Upload validation, limits, and filename safety
+# ---------------------------------------------------------------------------
+
+ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.heic', '.heif'}
+HEIC_EXTENSIONS = {'.heic', '.heif'}
+
+# Informational MIME check only -- the extension allow-list plus Pillow/
+# ExifTool actually opening the file are the real gates against a mislabeled
+# upload. Blank and octet-stream are accepted since many browsers/OSes send
+# no useful Content-Type for HEIC/HEIF.
+ALLOWED_CONTENT_TYPES = {
+    '', 'application/octet-stream',
+    'image/jpeg', 'image/jpg', 'image/pjpeg',
+    'image/png',
+    'image/heic', 'image/heif',
+    'image/heic-sequence', 'image/heif-sequence',
+}
+
+MAX_FILES_PER_UPLOAD = 60
+MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024
+MAX_TOTAL_UPLOAD_BYTES = 400 * 1024 * 1024
+MAX_DECODED_PIXELS = 60_000_000
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+PREVIEW_MAX_DIMENSION = 1600
+
+# Guard against decompression-bomb uploads: Pillow raises DecompressionBombError
+# above this pixel count instead of silently decoding an oversized image.
+Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
+
+
+def _safe_component(text: str) -> str:
+    text = re.sub(r'[^A-Za-z0-9._-]', '_', text)
+    return text.strip('._')
+
+
+def _sanitized_disk_filename(original_name: str, ext: str) -> str:
+    # Only used for the on-disk temp filename -- a client-supplied name is
+    # never used directly as a server path. The name shown to the browser
+    # and written into exports is tracked separately (see _display_filename).
+    base = os.path.basename((original_name or '').replace('\\', '/'))
+    root = _safe_component(os.path.splitext(base)[0]) or 'photo'
+    return f'{root[:100]}{ext}'
+
+
+def _display_filename(original_name: str) -> str:
+    base = os.path.basename((original_name or 'photo').replace('\\', '/'))
+    base = ''.join(ch for ch in base if ch.isprintable())
+    return base[:200] or 'photo'
+
+
+def _validate_upload_extension(filename: str, content_type: str | None) -> str:
+    ext = os.path.splitext(filename or '')[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f'Unsupported file type: {ext or "unknown"}')
+    ct = (content_type or '').lower().split(';')[0].strip()
+    if ct and ct not in ALLOWED_CONTENT_TYPES and not ct.startswith('image/'):
+        raise ValueError(f'Unsupported content type: {content_type}')
+    return ext
+
+
+async def _stream_upload_to_file(upload: UploadFile, dest_path: str, max_bytes: int) -> int:
+    total = 0
+    with open(dest_path, 'wb') as out:
+        while True:
+            chunk = await upload.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(f'File exceeds the {max_bytes // (1024 * 1024)} MB size limit')
+            out.write(chunk)
+    return total
+
+
+def _build_heic_preview(path: str) -> str | None:
+    # Bounded, browser-compatible JPEG preview for formats browsers cannot
+    # natively render inline (HEIC/HEIF). JPEG/PNG previews stay client-side
+    # (see photoURLs in the frontend) since browsers already render those.
+    try:
+        with Image.open(path) as img:
+            img.load()
+            img = ImageOps.exif_transpose(img)  # the only pixel rotation applied -- avoids double rotation
+            img = img.convert('RGB')
+            img.thumbnail((PREVIEW_MAX_DIMENSION, PREVIEW_MAX_DIMENSION))
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=78)
+    except Exception:
+        return None
+    return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
+
+# ---------------------------------------------------------------------------
+# GPS and camera metadata extraction
 # ---------------------------------------------------------------------------
 
 
@@ -186,13 +284,69 @@ def _coalesce(*values):
     return None
 
 
+def _altitude_below_sea_level(alt_ref) -> bool:
+    if alt_ref is None:
+        return False
+    if isinstance(alt_ref, (int, float)):
+        return int(alt_ref) == 1
+    return str(alt_ref).strip().lower().startswith('below')
+
+
+# GPSImgDirection only means true-north heading when its Ref tag says so;
+# a magnetic heading needs a location-and-date-dependent declination
+# correction this app does not attempt, so it is reported separately rather
+# than silently used as-is.
+def _heading_from_meta(meta: dict) -> tuple[float | None, bool]:
+    heading = meta.get('EXIF:GPSImgDirection')
+    if heading is None:
+        return None, False
+    try:
+        heading = float(heading)
+    except (TypeError, ValueError):
+        return None, False
+    ref = str(meta.get('EXIF:GPSImgDirectionRef') or '').strip().upper()
+    return heading, ref == 'T'
+
+
+VENDOR_POSE_TAGS = (
+    'XMP:GimbalYawDegree', 'XMP:GimbalPitchDegree', 'XMP:GimbalRollDegree',
+    'XMP:FlightYawDegree', 'XMP:FlightPitchDegree', 'XMP:FlightRollDegree',
+)
+
+
+def _as_float(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value):
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 # Extract GPS and camera metadata from photos via ExifTool. This will
-# return a list of dicts (one per geotagged photo).
-def extract_gps(file_paths):
+# return (features, errors): one normalized dict per geotagged photo, plus a
+# per-file error/reason list (unsupported type is caught earlier; this
+# covers unreadable metadata, missing GPS, and out-of-range coordinates) so
+# one bad photo never drops the rest of a batch silently.
+def extract_gps(file_paths, display_names: list[str] | None = None):
+    display_names = display_names or []
     features = []
+    errors = []
     with ExifToolHelper() as et:
         metadata_list = et.get_metadata(file_paths)
-    for meta in metadata_list:
+    for i, meta in enumerate(metadata_list):
+        filename = display_names[i] if i < len(display_names) else os.path.basename(meta.get('SourceFile', ''))
+
+        et_error = meta.get('ExifTool:Error')
+        if et_error:
+            errors.append({'filename': filename, 'error': f'Unreadable metadata: {et_error}'})
+            continue
+
         # Prefer Composite tags (signed decimal degrees); fall back to raw EXIF.
         composite_lat = meta.get('Composite:GPSLatitude')
         composite_lon = meta.get('Composite:GPSLongitude')
@@ -200,22 +354,34 @@ def extract_gps(file_paths):
         lon = _coalesce(composite_lon, meta.get('EXIF:GPSLongitude'))
 
         if lat is None or lon is None:
+            errors.append({'filename': filename, 'error': 'No GPS data found in this photo.'})
             continue
 
-        lat = float(lat)
-        lon = float(lon)
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (TypeError, ValueError):
+            errors.append({'filename': filename, 'error': 'Unreadable GPS coordinates.'})
+            continue
 
         # Raw EXIF tags are unsigned; apply Ref tag sign if used.
-        if composite_lat is None and meta.get('EXIF:GPSLatitudeRef', '').upper() == 'S':
+        if composite_lat is None and str(meta.get('EXIF:GPSLatitudeRef', '')).upper() == 'S':
             lat = -abs(lat)
-        if composite_lon is None and meta.get('EXIF:GPSLongitudeRef', '').upper() == 'W':
+        if composite_lon is None and str(meta.get('EXIF:GPSLongitudeRef', '')).upper() == 'W':
             lon = -abs(lon)
 
-        alt_raw = _coalesce(meta.get('Composite:GPSAltitude'), meta.get('EXIF:GPSAltitude'))
-        altitude_m = float(alt_raw) if alt_raw is not None else None
+        if not (math.isfinite(lat) and math.isfinite(lon)) or not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            errors.append({'filename': filename, 'error': 'GPS coordinates out of range.'})
+            continue
+
+        composite_alt = meta.get('Composite:GPSAltitude')
+        alt_raw = _coalesce(composite_alt, meta.get('EXIF:GPSAltitude'))
+        altitude_m = _as_float(alt_raw)
+        if altitude_m is not None and composite_alt is None and _altitude_below_sea_level(meta.get('EXIF:GPSAltitudeRef')):
+            altitude_m = -abs(altitude_m)
         altitude_ft = round(altitude_m * 3.28084, 1) if altitude_m is not None else None
 
-        filename = os.path.basename(meta.get('SourceFile', ''))
+        heading_deg, heading_is_true = _heading_from_meta(meta)
 
         features.append({
             'filename': filename,
@@ -225,9 +391,20 @@ def extract_gps(file_paths):
             'altitude_ft': altitude_ft,
             'datetime': meta.get('EXIF:DateTimeOriginal'),
             'camera_model': meta.get('EXIF:Model'),
+            'camera_make': meta.get('EXIF:Make'),
+            'heading_deg': heading_deg,
+            'heading_is_true': heading_is_true,
+            'focal_length_mm': _as_float(meta.get('EXIF:FocalLength')),
+            'focal_length_35mm_eq': _as_float(meta.get('EXIF:FocalLengthIn35mmFormat')),
+            'orientation': _as_int(meta.get('EXIF:Orientation')),
+            'pixel_width': _as_int(_coalesce(meta.get('EXIF:ExifImageWidth'), meta.get('File:ImageWidth'))),
+            'pixel_height': _as_int(_coalesce(meta.get('EXIF:ExifImageHeight'), meta.get('File:ImageHeight'))),
+            'subsec_time_original': meta.get('EXIF:SubSecTimeOriginal'),
+            'offset_time_original': meta.get('EXIF:OffsetTimeOriginal'),
+            'vendor_pose_detected': any(meta.get(tag) is not None for tag in VENDOR_POSE_TAGS),
         })
 
-    return features
+    return features, errors
 
 # ---------------------------------------------------------------------------
 # GeoJSON builder
@@ -267,6 +444,51 @@ def _parse_custom_crs(text: str) -> CRS:
             'or upload a .prj file that contains one.'
         )
 
+
+def _resolve_target_crs(epsg: str, custom_crs: str) -> CRS:
+    custom_crs = (custom_crs or '').strip()
+    if custom_crs:
+        try:
+            return _parse_custom_crs(custom_crs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    if epsg.strip():
+        try:
+            return CRS.from_epsg(int(epsg))
+        except Exception:
+            raise HTTPException(status_code=400, detail=f'Invalid EPSG code: {epsg}')
+    raise HTTPException(status_code=400, detail='No EPSG code or custom CRS provided')
+
+
+def _srs_label(target_crs: CRS) -> str:
+    epsg = target_crs.to_epsg()
+    return str(epsg) if epsg is not None else target_crs.to_wkt()
+
+
+def _rows_geodataframe(rows: list[dict]):
+    geometries = [Point(f['longitude'], f['latitude']) for f in rows]
+    properties = [
+        {k: v for k, v in f.items() if k not in ('latitude', 'longitude')}
+        for f in rows
+    ]
+    return gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
+
+
+def _parse_row_ids(raw: str | None) -> list[str] | None:
+    if raw is None or raw.strip() == '':
+        return None
+    return [r for r in (part.strip() for part in raw.split(',')) if r]
+
+
+def _get_session_rows(upload_id: str, row_ids_raw: str | None) -> list[dict]:
+    try:
+        rows = upload_sessions.get_rows(upload_id, _parse_row_ids(row_ids_raw))
+    except upload_sessions.SessionNotFound:
+        raise HTTPException(status_code=404, detail='Unknown or expired upload session. Upload photos again.')
+    if not rows:
+        raise HTTPException(status_code=400, detail='No data to export, upload photos first')
+    return rows
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -279,39 +501,124 @@ async def index(request: Request):
 
 @app.post('/upload')
 async def upload(
+    request: Request,
     photos: List[UploadFile] = File(...),
 ):
-    # Extract GPS from uploaded photos and cache results for /export.
-    # Temp files are needed because ExifTool requires real file paths.
+    # Extract GPS from uploaded photos and store results in a fresh, isolated
+    # upload session for /export and Oriented Imagery. Temp files are needed
+    # because ExifTool requires real file paths.
     if not photos:
         raise HTTPException(status_code=400, detail='No files received')
+    if len(photos) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(status_code=400, detail=f'Too many files in one upload (max {MAX_FILES_PER_UPLOAD})')
+
+    content_length = request.headers.get('content-length')
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_TOTAL_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f'Upload exceeds the {MAX_TOTAL_UPLOAD_BYTES // (1024 * 1024)} MB request limit',
+                )
+        except ValueError:
+            pass
 
     tmp_dir = tempfile.mkdtemp()
     try:
         saved_paths = []
-        for f in photos:
-            dest = os.path.join(tmp_dir, f.filename)
-            content = await f.read()
-            with open(dest, 'wb') as out:
-                out.write(content)
-            saved_paths.append(dest)
+        display_names = []
+        previews: dict[str, str] = {}
+        errors = []
+        total_bytes = 0
 
-        features = extract_gps(saved_paths)
+        for f in photos:
+            original_name = f.filename or 'photo'
+            display_name = _display_filename(original_name)
+            try:
+                ext = _validate_upload_extension(original_name, f.content_type)
+
+                remaining = MAX_TOTAL_UPLOAD_BYTES - total_bytes
+                if remaining <= 0:
+                    raise ValueError('Aggregate upload size limit exceeded')
+
+                sub_dir = os.path.join(tmp_dir, uuid.uuid4().hex)
+                os.makedirs(sub_dir)
+                dest = os.path.join(sub_dir, _sanitized_disk_filename(original_name, ext))
+
+                size = await _stream_upload_to_file(f, dest, min(MAX_FILE_SIZE_BYTES, remaining))
+                total_bytes += size
+
+                saved_paths.append(dest)
+                display_names.append(display_name)
+
+                if ext in HEIC_EXTENSIONS:
+                    preview = _build_heic_preview(dest)
+                    if preview:
+                        previews[display_name] = preview
+                    else:
+                        errors.append({
+                            'filename': display_name,
+                            'error': 'Could not generate a preview for this HEIC/HEIF photo.',
+                        })
+            except ValueError as e:
+                errors.append({'filename': display_name, 'error': str(e)})
+            finally:
+                await f.close()
+
+        if saved_paths:
+            features, gps_errors = extract_gps(saved_paths, display_names)
+            errors.extend(gps_errors)
+        else:
+            features = []
+
         geojson = build_geojson(features) if features else json.dumps({
             'type': 'FeatureCollection', 'features': []
         })
 
-        # Replace previous upload
-        global cached_features
-        cached_features = features
+        upload_id = upload_sessions.create_session()
+        try:
+            stored_rows = upload_sessions.set_rows(upload_id, features)
+        except upload_sessions.SessionLimitExceeded as e:
+            upload_sessions.delete_session(upload_id)
+            raise HTTPException(status_code=429, detail=str(e))
+
+        # Re-key the returned GeoJSON properties with each row's session id so
+        # the frontend can address markers/exports by row_id.
+        row_id_by_filename = {r['filename']: r['row_id'] for r in stored_rows}
+        geojson_obj = json.loads(geojson)
+        for feature in geojson_obj.get('features', []):
+            props = feature.get('properties') or {}
+            row_id = row_id_by_filename.get(props.get('filename'))
+            if row_id:
+                props['row_id'] = row_id
 
         return {
-            'geojson': json.loads(geojson),
-            'total_uploaded': len(saved_paths),
+            'upload_id': upload_id,
+            'geojson': geojson_obj,
+            'total_uploaded': len(photos),
             'total_geotagged': len(features),
+            'previews': previews,
+            'errors': errors,
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.delete('/session/{upload_id}')
+async def delete_session(upload_id: str):
+    # Idempotent: deleting an unknown/already-deleted/expired id still
+    # returns success, matching "Clear All" and best-effort unload cleanup.
+    upload_sessions.delete_session(upload_id)
+    return {'deleted': True}
+
+
+@app.post('/session/{upload_id}/close')
+async def close_session(upload_id: str):
+    # POST alias of the DELETE above: navigator.sendBeacon() can only send
+    # POST, so this is what the browser calls on page unload for best-effort
+    # cleanup (the 15-minute TTL is the fallback if this never arrives).
+    upload_sessions.delete_session(upload_id)
+    return {'deleted': True}
 
 
 @app.get('/zone-geojson')
@@ -350,10 +657,13 @@ async def crs_search(q: str = Query(default='')):
 
 
 @app.post('/export')
-# Reproject cached photo points and return as a downloadable file.
-# custom_crs will take priority over epsg.
+# Reproject the current upload session's rows and return as a downloadable
+# file. custom_crs will take priority over epsg. Requires the matching
+# upload_id -- another session's data is never visible here.
 async def export(
     format: str = Form(...),
+    upload_id: str = Form(...),
+    row_ids: str = Form(default=''),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
     source_path: str = Form(default=''),
@@ -366,30 +676,10 @@ async def export(
     # Sanitize for an internal layer name.
     name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
-    custom_crs = custom_crs.strip()
-    if custom_crs:
-        try:
-            target_crs = _parse_custom_crs(custom_crs)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    elif epsg.strip():
-        try:
-            epsg_int = int(epsg)
-            target_crs = CRS.from_epsg(epsg_int)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f'Invalid EPSG code: {epsg}')
-    else:
-        raise HTTPException(status_code=400, detail='No EPSG code or custom CRS provided')
+    target_crs = _resolve_target_crs(epsg, custom_crs)
+    rows = _get_session_rows(upload_id, row_ids)
 
-    if not cached_features:
-        raise HTTPException(status_code=400, detail='No data to export, upload photos first')
-
-    geometries = [Point(f['longitude'], f['latitude']) for f in cached_features]
-    properties = [
-        {k: v for k, v in f.items() if k not in ('latitude', 'longitude')}
-        for f in cached_features
-    ]
-    gdf = gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
+    gdf = _rows_geodataframe(rows)
 
     # Add source if a path is provided.
     clean_source = source_path.strip()
@@ -514,6 +804,179 @@ async def export(
         else:
             raise HTTPException(status_code=400, detail=f'Unknown format: {fmt}')
 
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.post('/oriented-imagery/preflight')
+# Per-file completeness counts for the Build Oriented Imagery panel, computed
+# from the upload session -- no repost required at this stage.
+async def oriented_imagery_preflight(
+    upload_id: str = Form(...),
+    row_ids: str = Form(default=''),
+):
+    from oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
+
+    rows = _get_session_rows(upload_id, row_ids)
+    return build_preflight(rows)
+
+
+@app.post('/oriented-imagery/reference')
+# Mode A: point ImagePath at images that already exist somewhere the *end
+# user's* machine can read. Only oriented_imagery.csv is produced.
+async def oriented_imagery_reference(
+    upload_id: str = Form(...),
+    row_ids: str = Form(default=''),
+    base_location: str = Form(...),
+    oriented_imagery_type: str = Form(...),
+    epsg: str = Form(default=''),
+    custom_crs: str = Form(default=''),
+    export_name: str = Form(default='oriented_imagery'),
+):
+    from oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
+
+    if oriented_imagery_type not in ORIENTED_IMAGERY_TYPES:
+        raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
+
+    target_crs = _resolve_target_crs(epsg, custom_crs)
+    rows = _get_session_rows(upload_id, row_ids)
+
+    try:
+        result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
+    except InvalidBaseLocation as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'oriented_imagery'
+    return Response(
+        content=result['csv'].encode('utf-8'),
+        media_type='text/csv',
+        headers={
+            'Content-Disposition': f'attachment; filename="{name}.csv"',
+            'X-Oriented-Imagery-Row-Count': str(result['row_count']),
+            'X-Oriented-Imagery-Excluded-Count': str(result['excluded_count']),
+        },
+    )
+
+
+@app.post('/oriented-imagery/reference-preview')
+# Preview resolved paths and warnings before the Mode A download happens.
+async def oriented_imagery_reference_preview(
+    upload_id: str = Form(...),
+    row_ids: str = Form(default=''),
+    base_location: str = Form(...),
+    oriented_imagery_type: str = Form(...),
+    epsg: str = Form(default=''),
+    custom_crs: str = Form(default=''),
+):
+    from oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
+
+    if oriented_imagery_type not in ORIENTED_IMAGERY_TYPES:
+        raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
+
+    target_crs = _resolve_target_crs(epsg, custom_crs)
+    rows = _get_session_rows(upload_id, row_ids)
+
+    try:
+        result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
+    except InvalidBaseLocation as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        'preview_paths': result['preview_paths'],
+        'row_count': result['row_count'],
+        'excluded_count': result['excluded_count'],
+        'warnings': result['warnings'],
+        'note': result['note'],
+    }
+
+
+@app.post('/oriented-imagery/portable')
+# Mode B: repost the currently-included browser File objects, re-extract
+# their metadata server-side, convert to privacy-stripped orientation-
+# normalized JPEG derivatives, and package a ZIP. Nothing here reads the
+# upload session's cached rows for pixels -- it only stores metadata, never
+# photo bytes -- so the originals must be reposted fresh for this export.
+async def oriented_imagery_portable(
+    request: Request,
+    upload_id: str = Form(...),
+    oriented_imagery_type: str = Form(...),
+    epsg: str = Form(default=''),
+    custom_crs: str = Form(default=''),
+    export_name: str = Form(default='oriented_imagery'),
+    photos: List[UploadFile] = File(...),
+):
+    from oriented_imagery import (
+        ORIENTED_IMAGERY_TYPES,
+        PortableItem,
+        PortablePackageTooLarge,
+        build_portable_package,
+    )
+
+    if oriented_imagery_type not in ORIENTED_IMAGERY_TYPES:
+        raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
+    if not photos:
+        raise HTTPException(status_code=400, detail='No files received')
+    if len(photos) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(status_code=400, detail=f'Too many files in one upload (max {MAX_FILES_PER_UPLOAD})')
+
+    # upload_id only scopes this request to a live, non-expired session
+    # (fails closed otherwise); the actual rows come from re-extracting the
+    # reposted files below, per the portable-mode metadata requirement.
+    try:
+        upload_sessions.get_rows(upload_id, row_ids=[])
+    except upload_sessions.SessionNotFound:
+        raise HTTPException(status_code=404, detail='Unknown or expired upload session. Upload photos again.')
+
+    target_crs = _resolve_target_crs(epsg, custom_crs)
+    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'oriented_imagery'
+
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        saved_paths = []
+        display_names = []
+        items = []
+        total_bytes = 0
+
+        for f in photos:
+            original_name = f.filename or 'photo'
+            display_name = _display_filename(original_name)
+            try:
+                ext = _validate_upload_extension(original_name, f.content_type)
+                remaining = MAX_TOTAL_UPLOAD_BYTES - total_bytes
+                if remaining <= 0:
+                    raise ValueError('Aggregate upload size limit exceeded')
+
+                sub_dir = os.path.join(tmp_dir, uuid.uuid4().hex)
+                os.makedirs(sub_dir)
+                dest = os.path.join(sub_dir, _sanitized_disk_filename(original_name, ext))
+                size = await _stream_upload_to_file(f, dest, min(MAX_FILE_SIZE_BYTES, remaining))
+                total_bytes += size
+
+                saved_paths.append(dest)
+                display_names.append(display_name)
+                items.append(PortableItem(display_name=display_name, source_path=dest))
+            except ValueError:
+                continue  # unsupported/oversized files are simply excluded from the package
+            finally:
+                await f.close()
+
+        if not saved_paths:
+            raise HTTPException(status_code=400, detail='No supported photos were received.')
+
+        rows_meta, _errors = extract_gps(saved_paths, display_names)
+
+        try:
+            zip_bytes = build_portable_package(
+                items, rows_meta, _srs_label(target_crs), oriented_imagery_type, name,
+            )
+        except PortablePackageTooLarge as e:
+            raise HTTPException(status_code=413, detail=str(e))
+
+        return Response(
+            content=zip_bytes,
+            media_type='application/zip',
+            headers={'Content-Disposition': f'attachment; filename="{name}.zip"'},
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
