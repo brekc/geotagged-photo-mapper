@@ -135,6 +135,7 @@ button {
 
 /* ── Sections hidden by default ── */
 #results-section,
+#oriented-imagery-section,
 #flight-details-section,
 #export-section { display: none; }
 

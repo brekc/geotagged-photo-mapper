@@ -31,14 +31,14 @@ const markerLayer = L.layerGroup().addTo(map);
 // ======== STATE ========
 // One entry per photo currently on the map, so the results list and the
 // remove/clear buttons can find and remove the matching marker.
-let mappedPhotos = []; // { filename, lat, lon, marker, row_id }
+let mappedPhotos = []; // { filename, lat, lon, marker, photo_id }
 
 // Opaque id for this tab's upload session (see upload_sessions.py). Every
 // export/Oriented Imagery call sends it; the server refuses without a match.
 let currentUploadId = null;
 
-function visibleRowIds() {
-  return mappedPhotos.map(p => p.row_id).filter(Boolean);
+function visiblePhotoIds() {
+  return mappedPhotos.map(p => p.photo_id).filter(Boolean);
 }
 
 // Best-effort session cleanup on Clear All / a new upload / tab close, so
@@ -163,13 +163,13 @@ uploadBtn.addEventListener('click', async () => {
     plotGeoJSON(geojson);
     populateResults(geojson);
 
-    // Show Export, Flight Details, Results, and Oriented Imagery when there
-    // is at least one geotagged photo to act on.
+    // Show Export, Flight Details, Results, and Oriented Imagery sections
+    // when there is at least one geotagged photo to act on.
     if (total_geotagged > 0) {
       document.getElementById('export-section').style.display = 'flex';
       document.getElementById('flight-details-section').style.display = 'flex';
       document.getElementById('results-section').style.display = 'flex';
-      document.getElementById('oi-open-btn').style.display = '';
+      document.getElementById('oriented-imagery-section').style.display = 'flex';
     }
   } catch (err) {
     statusEl.textContent = `Network error: ${err.message}`;
@@ -193,7 +193,7 @@ function plotGeoJSON(geojson) {
     const imgUrl = photoURLs.get(p.filename);
     const marker = buildMarker(p, lat, lon, imgUrl);
     markerLayer.addLayer(marker);
-    mappedPhotos.push({ filename: p.filename, lat, lon, marker, row_id: p.row_id });
+    mappedPhotos.push({ filename: p.filename, lat, lon, marker, photo_id: p.photo_id });
   });
 
   // Zoom/pan to fit every plotted photo. Use try/catch since
@@ -471,7 +471,7 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   const formData = new FormData();
   formData.append('format', format);
   formData.append('upload_id', currentUploadId);
-  formData.append('row_ids', visibleRowIds().join(','));
+  formData.append('photo_ids', visiblePhotoIds().join(','));
   formData.append('epsg', epsg);
   // custom_crs takes priority over epsg when non-empty.
   if (customCrs) formData.append('custom_crs', customCrs);
@@ -565,6 +565,7 @@ function removePhoto(filename, li) {
   // Hide sections when data can be shown or exported.
   if (mappedPhotos.length === 0) {
     document.getElementById('results-section').style.display = 'none';
+    document.getElementById('oriented-imagery-section').style.display = 'none';
     document.getElementById('export-section').style.display = 'none';
     document.getElementById('flight-details-section').style.display = 'none';
     statusEl.textContent = 'All photos removed. Ready for new upload.';
@@ -577,6 +578,7 @@ clearBtn.addEventListener('click', () => {
   markerLayer.clearLayers();
   document.getElementById('results-list').innerHTML = '';
   document.getElementById('results-section').style.display = 'none';
+  document.getElementById('oriented-imagery-section').style.display = 'none';
   document.getElementById('export-section').style.display = 'none';
   document.getElementById('flight-details-section').style.display = 'none';
   closeOrientedImageryModal();
@@ -937,7 +939,7 @@ async function loadOiPreflight() {
   try {
     const formData = new FormData();
     formData.append('upload_id', currentUploadId);
-    formData.append('row_ids', visibleRowIds().join(','));
+    formData.append('photo_ids', visiblePhotoIds().join(','));
     const res = await fetch('/oriented-imagery/preflight', { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok) {
@@ -975,7 +977,7 @@ oiPreviewBtn.addEventListener('click', async () => {
   try {
     const formData = new FormData();
     formData.append('upload_id', currentUploadId);
-    formData.append('row_ids', visibleRowIds().join(','));
+    formData.append('photo_ids', visiblePhotoIds().join(','));
     formData.append('base_location', base);
     formData.append('oriented_imagery_type', oiTypeSelect.value);
     formData.append('epsg', currentEpsgValue());
@@ -1021,7 +1023,7 @@ oiDownloadBtn.addEventListener('click', async () => {
       }
       const formData = new FormData();
       formData.append('upload_id', currentUploadId);
-      formData.append('row_ids', visibleRowIds().join(','));
+      formData.append('photo_ids', visiblePhotoIds().join(','));
       formData.append('base_location', base);
       formData.append('oriented_imagery_type', oiTypeSelect.value);
       formData.append('epsg', currentEpsgValue());

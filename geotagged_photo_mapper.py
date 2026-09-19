@@ -36,7 +36,7 @@ from PIL import Image, ImageOps
 from shapely.geometry import Point
 
 import pillow_heif
-import upload_sessions
+from features import upload_sessions
 
 # Must run before any Image.open() call so .heic/.heif decode like any other format.
 pillow_heif.register_heif_opener()
@@ -462,21 +462,23 @@ def _srs_label(target_crs: CRS) -> str:
 def _rows_geodataframe(rows: list[dict]):
     geometries = [Point(f['longitude'], f['latitude']) for f in rows]
     properties = [
-        {k: v for k, v in f.items() if k not in ('latitude', 'longitude')}
+        # latitude/longitude become the geometry; photo_id is a random,
+        # session-scoped token with no meaning once the file is downloaded.
+        {k: v for k, v in f.items() if k not in ('latitude', 'longitude', 'photo_id')}
         for f in rows
     ]
     return gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
 
 
-def _parse_row_ids(raw: str | None) -> list[str] | None:
+def _parse_photo_ids(raw: str | None) -> list[str] | None:
     if raw is None or raw.strip() == '':
         return None
     return [r for r in (part.strip() for part in raw.split(',')) if r]
 
 
-def _get_session_rows(upload_id: str, row_ids_raw: str | None) -> list[dict]:
+def _get_session_rows(upload_id: str, photo_ids_raw: str | None) -> list[dict]:
     try:
-        rows = upload_sessions.get_rows(upload_id, _parse_row_ids(row_ids_raw))
+        rows = upload_sessions.get_rows(upload_id, _parse_photo_ids(photo_ids_raw))
     except upload_sessions.SessionNotFound:
         raise HTTPException(status_code=404, detail='Unknown or expired upload session. Upload photos again.')
     if not rows:
@@ -577,14 +579,14 @@ async def upload(
             raise HTTPException(status_code=429, detail=str(e))
 
         # Re-key the returned GeoJSON properties with each row's session id so
-        # the frontend can address markers/exports by row_id.
-        row_id_by_filename = {r['filename']: r['row_id'] for r in stored_rows}
+        # the frontend can address markers/exports by photo_id.
+        photo_id_by_filename = {r['filename']: r['photo_id'] for r in stored_rows}
         geojson_obj = json.loads(geojson)
         for feature in geojson_obj.get('features', []):
             props = feature.get('properties') or {}
-            row_id = row_id_by_filename.get(props.get('filename'))
-            if row_id:
-                props['row_id'] = row_id
+            photo_id = photo_id_by_filename.get(props.get('filename'))
+            if photo_id:
+                props['photo_id'] = photo_id
 
         return {
             'upload_id': upload_id,
@@ -657,7 +659,7 @@ async def crs_search(q: str = Query(default='')):
 async def export(
     format: str = Form(...),
     upload_id: str = Form(...),
-    row_ids: str = Form(default=''),
+    photo_ids: str = Form(default=''),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
     source_path: str = Form(default=''),
@@ -671,7 +673,7 @@ async def export(
     name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    rows = _get_session_rows(upload_id, row_ids)
+    rows = _get_session_rows(upload_id, photo_ids)
 
     gdf = _rows_geodataframe(rows)
 
@@ -807,11 +809,11 @@ async def export(
 # from the upload session -- no repost required at this stage.
 async def oriented_imagery_preflight(
     upload_id: str = Form(...),
-    row_ids: str = Form(default=''),
+    photo_ids: str = Form(default=''),
 ):
-    from oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
+    from features.oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
 
-    rows = _get_session_rows(upload_id, row_ids)
+    rows = _get_session_rows(upload_id, photo_ids)
     return build_preflight(rows)
 
 
@@ -820,20 +822,20 @@ async def oriented_imagery_preflight(
 # user's* machine can read. Only oriented_imagery.csv is produced.
 async def oriented_imagery_reference(
     upload_id: str = Form(...),
-    row_ids: str = Form(default=''),
+    photo_ids: str = Form(default=''),
     base_location: str = Form(...),
     oriented_imagery_type: str = Form(...),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
     export_name: str = Form(default='oriented_imagery'),
 ):
-    from oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
+    from features.oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
 
     if oriented_imagery_type not in ORIENTED_IMAGERY_TYPES:
         raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    rows = _get_session_rows(upload_id, row_ids)
+    rows = _get_session_rows(upload_id, photo_ids)
 
     try:
         result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
@@ -856,19 +858,19 @@ async def oriented_imagery_reference(
 # Preview resolved paths and warnings before the Mode A download happens.
 async def oriented_imagery_reference_preview(
     upload_id: str = Form(...),
-    row_ids: str = Form(default=''),
+    photo_ids: str = Form(default=''),
     base_location: str = Form(...),
     oriented_imagery_type: str = Form(...),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
 ):
-    from oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
+    from features.oriented_imagery import ORIENTED_IMAGERY_TYPES, InvalidBaseLocation, build_reference_export
 
     if oriented_imagery_type not in ORIENTED_IMAGERY_TYPES:
         raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    rows = _get_session_rows(upload_id, row_ids)
+    rows = _get_session_rows(upload_id, photo_ids)
 
     try:
         result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
@@ -897,7 +899,7 @@ async def oriented_imagery_portable(
     export_name: str = Form(default='oriented_imagery'),
     photos: List[UploadFile] = File(...),
 ):
-    from oriented_imagery import (
+    from features.oriented_imagery import (
         ORIENTED_IMAGERY_TYPES,
         PortableItem,
         PortablePackageTooLarge,
@@ -914,7 +916,7 @@ async def oriented_imagery_portable(
     # upload_id here only confirms a live session (fails closed otherwise);
     # the rows themselves come from re-extracting the reposted files below.
     try:
-        upload_sessions.get_rows(upload_id, row_ids=[])
+        upload_sessions.get_rows(upload_id, photo_ids=[])
     except upload_sessions.SessionNotFound:
         raise HTTPException(status_code=404, detail='Unknown or expired upload session. Upload photos again.')
 

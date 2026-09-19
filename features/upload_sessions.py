@@ -6,7 +6,7 @@ never read or overwrite each other's mapped photos.
 Each browser upload gets its own opaque, cryptographically random
 `upload_id`. A session holds only normalized metadata rows (the same
 primitive fields the map and exports already use, each with its own random
-`row_id`) plus per-row warnings -- never raw photo bytes or filesystem paths.
+`photo_id`) plus per-row warnings -- never raw photo bytes or filesystem paths.
 A single process-wide lock guards the store; a 15-minute sliding inactivity
 window and hard caps on session/row counts bound memory.
 
@@ -30,7 +30,8 @@ MAX_TOTAL_ROWS = 20000
 
 
 class SessionError(Exception):
-    """Base class for session failures. Every caller must fail closed on these."""
+    # Base class for session failures. Every caller must fail closed on these.
+    pass
 
 
 class SessionNotFound(SessionError):
@@ -77,8 +78,8 @@ def _get_locked(upload_id: str, now: float) -> dict:
     return session
 
 
+# Start a new, empty session and return its opaque upload_id.
 def create_session() -> str:
-    """Start a new, empty session and return its opaque upload_id."""
     upload_id = secrets.token_urlsafe(32)
     now = _now()
     with _LOCK:
@@ -88,19 +89,18 @@ def create_session() -> str:
         _SESSIONS[upload_id] = {
             'created_at': now,
             'last_access': now,
-            'rows': {},       # row_id -> normalized feature dict
-            'row_order': [],  # row_ids in upload order, for SequenceOrder
+            'rows': {},       # photo_id -> normalized feature dict
+            'row_order': [],  # photo_ids in upload order, for SequenceOrder
         }
     return upload_id
 
 
+# Replace a session's rows with freshly extracted features.
+#
+# Returns defensive copies of the features with a `photo_id` merged into
+# each one. Raises SessionNotFound for an unknown/expired id and
+# SessionLimitExceeded if the row-count bounds would be exceeded.
 def set_rows(upload_id: str, features: list[dict]) -> list[dict]:
-    """Replace a session's rows with freshly extracted features.
-
-    Returns defensive copies of the features with a `row_id` merged into
-    each one. Raises SessionNotFound for an unknown/expired id and
-    SessionLimitExceeded if the row-count bounds would be exceeded.
-    """
     now = _now()
     with _LOCK:
         session = _get_locked(upload_id, now)
@@ -115,11 +115,11 @@ def set_rows(upload_id: str, features: list[dict]) -> list[dict]:
         row_order: list[str] = []
         result: list[dict] = []
         for feature in features:
-            row_id = secrets.token_urlsafe(16)
+            photo_id = secrets.token_urlsafe(16)
             row = dict(feature)
-            row['row_id'] = row_id
-            rows[row_id] = row
-            row_order.append(row_id)
+            row['photo_id'] = photo_id
+            rows[photo_id] = row
+            row_order.append(photo_id)
             result.append(dict(row))
 
         session['rows'] = rows
@@ -127,27 +127,26 @@ def set_rows(upload_id: str, features: list[dict]) -> list[dict]:
         return result
 
 
-def get_rows(upload_id: str, row_ids: list[str] | None = None) -> list[dict]:
-    """Defensive copies of a session's rows, in upload order.
-
-    If `row_ids` is given, only rows present in BOTH the session and that
-    list are returned -- unknown/stale ids are silently dropped rather than
-    failing the whole request, since marker removal naturally shrinks the
-    set of ids a client sends. Raises SessionNotFound for an unknown/expired
-    upload_id (that check always fails closed).
-    """
+# Defensive copies of a session's rows, in upload order.
+#
+# If `photo_ids` is given, only rows present in BOTH the session and that
+# list are returned -- unknown/stale ids are silently dropped rather than
+# failing the whole request, since marker removal naturally shrinks the
+# set of ids a client sends. Raises SessionNotFound for an unknown/expired
+# upload_id (that check always fails closed).
+def get_rows(upload_id: str, photo_ids: list[str] | None = None) -> list[dict]:
     now = _now()
     with _LOCK:
         session = _get_locked(upload_id, now)
-        wanted = set(row_ids) if row_ids is not None else None
+        wanted = set(photo_ids) if photo_ids is not None else None
         return [
-            dict(session['rows'][rid])
-            for rid in session['row_order']
-            if rid in session['rows'] and (wanted is None or rid in wanted)
+            dict(session['rows'][pid])
+            for pid in session['row_order']
+            if pid in session['rows'] and (wanted is None or pid in wanted)
         ]
 
 
+# Idempotent: deleting an unknown or already-deleted id is not an error.
 def delete_session(upload_id: str) -> None:
-    """Idempotent: deleting an unknown or already-deleted id is not an error."""
     with _LOCK:
         _SESSIONS.pop(upload_id, None)

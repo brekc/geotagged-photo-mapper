@@ -163,7 +163,7 @@ uvicorn geotagged_photo_mapper:app --reload
 ### Backend (Python / FastAPI)
 
 - **`POST /upload`**: Receives image files (JPEG, PNG, HEIC, HEIF), extracts GPS/camera EXIF via PyExifTool, stores the result in a new isolated upload session (see [Multi-User Sessions](#multi-user-sessions)), and returns a GeoJSON FeatureCollection plus the session's `upload_id`
-- **`POST /export`**: Reprojects a session's rows (filtered to the given `row_ids`, if any) to the selected CRS via GeoPandas and streams the file, given a matching `upload_id`
+- **`POST /export`**: Reprojects a session's selected photos to the target CRS through GeoPandas and streams the requested file. Requires the matching `upload_id`; optional `photo_ids` and restrict the export to visible photos
 - **`DELETE /session/{upload_id}`** / **`POST /session/{upload_id}/close`**: Explicitly and idempotently deletes an upload session (Clear All uses the former; best-effort browser-unload cleanup uses the latter, since `navigator.sendBeacon()` can only POST)
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns UTM or US State Plane zone polygons for the reference layer toggles. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
@@ -218,7 +218,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Oriented Imagery Export**
 
-After a successful upload, "Build Oriented Imagery" builds an oriented imagery table from the mapped photos. It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
+After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery table (schema reference in [Relevant Resources](#relevant-resources) below) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
 
 - **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Only JPEG/JPG/TIF are referenced; PNG/HEIC/HEIF are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
 - **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
@@ -234,7 +234,7 @@ Only generic EXIF is understood (v1) -- no vendor pose adapters. Specifically:
 
 Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; an unknown, expired, deleted, or foreign id fails closed (404), so two people sharing an instance can never read or overwrite each other's data. Removing a marker or clicking Clear All immediately changes what the next export includes.
 
-This store is in-memory and **process-local**, so it's only correct behind a single Uvicorn worker (the default). A multi-worker deployment would need a shared external store (Redis, a database) instead -- a session created on one worker is otherwise invisible to a request handled by another.
+This store is in-memory and **process-local**, so it only works behind a single Uvicorn worker (the default). A multi-worker deployment needs a shared external store (Redis, a database) instead, since a session created on one worker isn't visible to requests handled by another.
 
 ---
 
@@ -258,6 +258,7 @@ Python dependencies are managed via Conda (`environment.yml`) or pip (`requireme
 
 ## Relevant Resources
 
+- [Esri Oriented Imagery Table Schema](https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html): the table schema `oriented_imagery.csv` follows
 - [ExifTool Documentation](https://exiftool.org/): complete tag reference for EXIF/GPS metadata
 - [EPSG Registry](https://epsg.io/): look up coordinate reference systems by name, region, or code
 - [GeoPandas I/O](https://geopandas.org/en/stable/docs/reference/io.html): supported spatial formats and driver options

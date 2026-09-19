@@ -42,8 +42,13 @@
       <div class="section" id="results-section">
         <div class="section-header">Geotagged Photos</div>
         <ul id="results-list"></ul>
-        <button id="oi-open-btn" type="button" class="secondary-btn">Build Oriented Imagery</button>
         <button id="clear-btn" type="button">Clear All</button>
+      </div>
+
+      <!-- Oriented Imagery section -->
+      <div class="section" id="oriented-imagery-section">
+        <div class="section-header">Oriented Imagery</div>
+        <button id="oi-open-btn" type="button" class="secondary-btn">Build Oriented Imagery</button>
       </div>
 
       <!-- Flight Details section -->
@@ -282,7 +287,7 @@
     </div>
 
     <div id="oi-modal-body">
-      <p class="oi-notice">Different cameras expose different metadata. Missing values are left blank and are not inferred.</p>
+      <p class="oi-notice">Missing metadata is left blank, never inferred.</p>
 
       <div class="oi-field">
         <div class="section-header">Metadata Completeness</div>
@@ -313,14 +318,14 @@
         <div class="oi-field">
           <label for="oi-base-location">Image base location</label>
           <input id="oi-base-location" type="text" placeholder="C:\Photos\project\, \\server\share\photos\, or https://example.com/photos/">
-          <div class="oi-hint">Local path, UNC path, or http(s) URL. Only JPEG/JPG/TIF images are referenced here; PNG/HEIC/HEIF are excluded.</div>
+          <div class="oi-hint">Local path, UNC path, or URL. Only JPEG/TIF are referenced; PNG/HEIC/HEIF are excluded.</div>
         </div>
         <button id="oi-preview-btn" type="button" class="secondary-btn">Preview resolved paths</button>
         <div id="oi-preview-output" aria-live="polite"></div>
       </div>
 
       <div id="oi-portable-fields" hidden>
-        <p class="oi-hint">Re-converts JPEG/PNG/HEIC/HEIF photos to orientation-normalized JPEG derivatives and packages oriented_imagery.csv, manifest.json, README.txt, and images/ into a ZIP.</p>
+        <p class="oi-hint">Converts photos to orientation-normalized JPEGs and packages the CSV, manifest, README, and images into a ZIP.</p>
       </div>
 
       <div class="oi-field">
@@ -334,9 +339,8 @@
       </div>
 
       <div id="oi-privacy-notice">
-        Portable-mode image derivatives have EXIF, XMP, GPS, thumbnail, and device-serial metadata removed.
-        The CSV and manifest carry the authoritative location and camera fields instead. Reference mode never
-        uploads or reads your image files -- only the base location text is sent.
+        Portable mode strips EXIF/XMP/GPS/thumbnail/serial metadata from image derivatives; the CSV and manifest
+        carry that data instead. Reference mode never uploads your images, only the base location text is sent.
       </div>
 
       <div id="oi-row-status" aria-live="polite"></div>
