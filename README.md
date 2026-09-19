@@ -16,7 +16,7 @@ The full-featured Python app (export, CRS picker, etc.) requires the local/Docke
 
 ## Local & Private
 
-This app runs as a **local web server**, with no account or login required. Photos are processed through short-lived request-scoped temporary files that are always cleaned up, and are never sent to any external server. The only outbound connections are basemap tile requests to OpenStreetMap, Esri, or USGS, and (for datum-shift grids and the State Plane reference layer) a couple of one-time downloads described elsewhere in this README.
+This app runs as a **local web server** with no account or login. Photos are processed through short-lived, request-scoped temp files that are always cleaned up, and never leave this machine. Outbound connections are limited to basemap tiles (OpenStreetMap, Esri, USGS) and a couple of one-time reference-data downloads described below.
 
 By default it only listens on `localhost`:
 
@@ -26,7 +26,7 @@ uvicorn geotagged_photo_mapper:app --reload
 
 ### Optional: trusted private-LAN use
 
-Multiple people on the same trusted private network can use one running instance at once (see [Multi-User Sessions](#multi-user-sessions) below). To allow that, bind to all interfaces instead of just localhost:
+Multiple people on the same trusted network can share one running instance (see [Multi-User Sessions](#multi-user-sessions)). Bind to all interfaces instead of just localhost:
 
 ```bash
 uvicorn geotagged_photo_mapper:app --host 0.0.0.0 --port 8000
@@ -162,8 +162,8 @@ uvicorn geotagged_photo_mapper:app --reload
 
 ### Backend (Python / FastAPI)
 
-- **`POST /upload`**: Receives image files (JPEG, PNG, HEIC, HEIF), extracts GPS/camera EXIF metadata via PyExifTool, stores the normalized result in a new isolated upload session (see [Multi-User Sessions](#multi-user-sessions)), and returns a GeoJSON FeatureCollection plus the session's `upload_id`
-- **`POST /export`**: Given a matching `upload_id` (and optionally the visible `row_ids`), reprojects that session's rows to the selected CRS via GeoPandas and streams the file to the browser
+- **`POST /upload`**: Receives image files (JPEG, PNG, HEIC, HEIF), extracts GPS/camera EXIF via PyExifTool, stores the result in a new isolated upload session (see [Multi-User Sessions](#multi-user-sessions)), and returns a GeoJSON FeatureCollection plus the session's `upload_id`
+- **`POST /export`**: Reprojects a session's rows (filtered to the given `row_ids`, if any) to the selected CRS via GeoPandas and streams the file, given a matching `upload_id`
 - **`DELETE /session/{upload_id}`** / **`POST /session/{upload_id}/close`**: Explicitly and idempotently deletes an upload session (Clear All uses the former; best-effort browser-unload cleanup uses the latter, since `navigator.sendBeacon()` can only POST)
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns UTM or US State Plane zone polygons for the reference layer toggles. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
@@ -189,7 +189,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 **Upload & Map**
 - Drag-and-drop or click-to-browse photo upload -- JPEG, PNG, HEIC, and HEIF, in any mixed batch
 - Extracts latitude, longitude, altitude, datetime, and camera model from EXIF via ExifTool (on the untouched original file, regardless of format)
-- HEIC/HEIF photos get a bounded, browser-compatible JPEG preview generated server-side (via Pillow + pillow-heif) since most browsers cannot render HEIC/HEIF inline; JPEG/PNG previews stay entirely client-side as before
+- Most browsers can't render HEIC/HEIF inline, so those get a bounded JPEG preview generated server-side (Pillow + pillow-heif); JPEG/PNG previews stay client-side as before
 - One bad or unsupported file never aborts the rest of a batch -- per-file errors (unsupported type, corrupt image, missing GPS, unreadable metadata) are reported alongside the successful results
 - Each point opens a popup with a photo thumbnail, metadata, and a click-to-zoom lightbox
 - Map auto-fits to the uploaded photo locations
@@ -218,19 +218,23 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Oriented Imagery Export**
 
-After a successful upload, "Build Oriented Imagery" opens a panel that builds an [Esri Oriented Imagery table](https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html) from the currently-mapped photos (only the Oriented Imagery table -- no separate Frames/Cameras tables). It always states that "different cameras expose different metadata; missing values are left blank and are not inferred," and reuses the sidebar's existing CRS selection rather than adding a second one.
+After a successful upload, "Build Oriented Imagery" builds an [Esri Oriented Imagery table](https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
 
-- **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Only JPEG/JPG/TIF are referenced; PNG/HEIC/HEIF are excluded with a warning. A preview shows a few resolved paths before download -- the server validates the *shape* of the path/URL only, since it cannot confirm a path on your machine actually exists.
-- **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (with source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
+- **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Only JPEG/JPG/TIF are referenced; PNG/HEIC/HEIF are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
+- **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
 
-Only generic EXIF is understood (v1). Fields that need a documented, fixture-tested camera/gimbal adapter -- `CameraPitch`, `CameraRoll`, `Omega`, `Phi`, `Kappa`, `Matrix`, principal-point and distortion coefficients -- are always left blank rather than guessed; `CameraHeading` is populated only when `GPSImgDirectionRef` confirms a true-north reading (a magnetic heading is left blank with a warning instead of an invented declination correction); FocalLength-based horizontal/vertical FOV is labeled as an approximate 35mm-equivalent estimate, never a calibration; and `OrientedImageryType` must always be picked explicitly (Horizontal / Oblique / Nadir / 360 / Inspection) rather than guessed from the filename or camera model.
+Only generic EXIF is understood (v1) -- no vendor pose adapters. Specifically:
+- Pose/calibration fields (`CameraPitch`, `CameraRoll`, `Omega`, `Phi`, `Kappa`, `Matrix`, principal-point and distortion coefficients) are always left blank rather than guessed.
+- `CameraHeading` is populated only when `GPSImgDirectionRef` confirms true north; a magnetic heading is left blank with a warning instead of an invented declination correction.
+- Horizontal/vertical FOV is an approximate 35mm-equivalent estimate, never a calibration.
+- `OrientedImageryType` must always be picked explicitly (Horizontal / Oblique / Nadir / 360 / Inspection), never guessed from the filename or camera model.
 
 <a id="multi-user-sessions"></a>
 **Multi-User Sessions (Trusted LAN)**
 
-Each upload gets its own cryptographically random `upload_id` and stores only normalized metadata rows (never raw photo bytes or filesystem paths) in an in-memory session protected by a lock, with a 15-minute sliding inactivity expiration and bounded session/row counts. Standard GIS exports and Oriented Imagery exports both require the matching `upload_id`; an unknown, expired, deleted, or another session's id fails closed (404), so two people using the same running instance can never read or overwrite each other's data. Removing a marker or clicking Clear All immediately changes what a subsequent export includes.
+Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; an unknown, expired, deleted, or foreign id fails closed (404), so two people sharing an instance can never read or overwrite each other's data. Removing a marker or clicking Clear All immediately changes what the next export includes.
 
-This is an in-memory, **process-local** store, so it is only correct behind a single Uvicorn worker (the default). A multi-worker or multi-process deployment would need a shared external store (Redis, a database) instead of this in-memory dict, since a session created on one worker would otherwise be invisible to a request handled by another.
+This store is in-memory and **process-local**, so it's only correct behind a single Uvicorn worker (the default). A multi-worker deployment would need a shared external store (Redis, a database) instead -- a session created on one worker is otherwise invisible to a request handled by another.
 
 ---
 

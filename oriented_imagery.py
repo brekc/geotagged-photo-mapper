@@ -64,17 +64,9 @@ AUDIT_FIELDS = [
 
 ORIENTED_IMAGERY_FIELDS = CORE_FIELDS + AUDIT_FIELDS
 
-# Fields never populated in this generic-EXIF-only version. Always blank.
-_ALWAYS_BLANK_FIELDS = (
-    'CameraPitch', 'CameraRoll', 'Omega', 'Phi', 'Kappa', 'Matrix',
-    'PrincipalX', 'PrincipalY', 'Radial', 'Tangential',
-    'A0', 'A1', 'A2', 'B0', 'B1', 'B2',
-)
-
-# Free-text fields that can contain attacker/camera-controlled strings and
-# so need CSV formula-injection escaping. Numeric fields are computed by
-# this app from validated floats and are written as plain numbers instead,
-# since prefixing a legitimate negative coordinate with a quote would
+# Free-text fields that can carry attacker/camera-controlled strings and so
+# need CSV formula-injection escaping. Numeric fields are written as plain
+# numbers instead, since quoting a legitimate negative coordinate would
 # corrupt it for GIS ingestion.
 _TEXT_FIELDS = {
     'ImagePath', 'SRS', 'Name', 'AcquisitionDate', 'OrientedImageryType',
@@ -465,10 +457,9 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def _build_derivative_jpeg(source_path: str) -> bytes:
-    """Orientation-normalized, privacy-stripped JPEG derivative. Only a
-    small, bounded ICC profile is carried over; no EXIF/XMP/GPS/thumbnail
-    data is written to the output at all since we never pass any of it to
-    save()."""
+    """Orientation-normalized, privacy-stripped JPEG derivative. EXIF/XMP/GPS/
+    thumbnail data is never passed to save(), so none of it survives; only a
+    small, bounded ICC profile is carried over."""
     with Image.open(source_path) as img:
         img.load()
         img = ImageOps.exif_transpose(img)

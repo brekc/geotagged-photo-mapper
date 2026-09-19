@@ -38,8 +38,7 @@ from shapely.geometry import Point
 import pillow_heif
 import upload_sessions
 
-# Register HEIC/HEIF support before any Pillow Image.open() call so .heic and
-# .heif uploads decode like any other Pillow-supported format.
+# Must run before any Image.open() call so .heic/.heif decode like any other format.
 pillow_heif.register_heif_opener()
 
 # Set PROJ grid cache before importing. This will preserve the grid cache
@@ -187,10 +186,9 @@ STATE_ABBR: dict[str, str] = {
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.heic', '.heif'}
 HEIC_EXTENSIONS = {'.heic', '.heif'}
 
-# Informational MIME check only -- the extension allow-list plus Pillow/
-# ExifTool actually opening the file are the real gates against a mislabeled
-# upload. Blank and octet-stream are accepted since many browsers/OSes send
-# no useful Content-Type for HEIC/HEIF.
+# Informational only -- the extension allow-list plus Pillow/ExifTool actually
+# opening the file are the real gates. Blank/octet-stream are accepted since
+# many browsers/OSes send no useful Content-Type for HEIC/HEIF.
 ALLOWED_CONTENT_TYPES = {
     '', 'application/octet-stream',
     'image/jpeg', 'image/jpg', 'image/pjpeg',
@@ -217,9 +215,9 @@ def _safe_component(text: str) -> str:
 
 
 def _sanitized_disk_filename(original_name: str, ext: str) -> str:
-    # Only used for the on-disk temp filename -- a client-supplied name is
-    # never used directly as a server path. The name shown to the browser
-    # and written into exports is tracked separately (see _display_filename).
+    # Only for the on-disk temp filename -- never trust a client name as a
+    # server path. The browser-facing/export name is tracked separately
+    # (see _display_filename).
     base = os.path.basename((original_name or '').replace('\\', '/'))
     root = _safe_component(os.path.splitext(base)[0]) or 'photo'
     return f'{root[:100]}{ext}'
@@ -256,9 +254,8 @@ async def _stream_upload_to_file(upload: UploadFile, dest_path: str, max_bytes: 
 
 
 def _build_heic_preview(path: str) -> str | None:
-    # Bounded, browser-compatible JPEG preview for formats browsers cannot
-    # natively render inline (HEIC/HEIF). JPEG/PNG previews stay client-side
-    # (see photoURLs in the frontend) since browsers already render those.
+    # Browsers can't render HEIC/HEIF inline, so build a bounded JPEG preview
+    # server-side. JPEG/PNG stay client-side (see photoURLs in the frontend).
     try:
         with Image.open(path) as img:
             img.load()
@@ -292,10 +289,9 @@ def _altitude_below_sea_level(alt_ref) -> bool:
     return str(alt_ref).strip().lower().startswith('below')
 
 
-# GPSImgDirection only means true-north heading when its Ref tag says so;
-# a magnetic heading needs a location-and-date-dependent declination
-# correction this app does not attempt, so it is reported separately rather
-# than silently used as-is.
+# GPSImgDirection is only a true heading when its Ref tag confirms it; a
+# magnetic heading needs a declination correction this app doesn't attempt,
+# so it's reported separately instead of used as-is.
 def _heading_from_meta(meta: dict) -> tuple[float | None, bool]:
     heading = meta.get('EXIF:GPSImgDirection')
     if heading is None:
@@ -328,11 +324,9 @@ def _as_int(value):
         return None
 
 
-# Extract GPS and camera metadata from photos via ExifTool. This will
-# return (features, errors): one normalized dict per geotagged photo, plus a
-# per-file error/reason list (unsupported type is caught earlier; this
-# covers unreadable metadata, missing GPS, and out-of-range coordinates) so
-# one bad photo never drops the rest of a batch silently.
+# Extract GPS and camera metadata via ExifTool. Returns (features, errors)
+# rather than raising on a bad photo, so one unreadable/missing-GPS file
+# never drops the rest of the batch.
 def extract_gps(file_paths, display_names: list[str] | None = None):
     display_names = display_names or []
     features = []
@@ -504,9 +498,9 @@ async def upload(
     request: Request,
     photos: List[UploadFile] = File(...),
 ):
-    # Extract GPS from uploaded photos and store results in a fresh, isolated
-    # upload session for /export and Oriented Imagery. Temp files are needed
-    # because ExifTool requires real file paths.
+    # Temp files are needed because ExifTool requires real file paths.
+    # Results land in a fresh, isolated upload session for /export and
+    # Oriented Imagery to use.
     if not photos:
         raise HTTPException(status_code=400, detail='No files received')
     if len(photos) > MAX_FILES_PER_UPLOAD:
@@ -891,11 +885,9 @@ async def oriented_imagery_reference_preview(
 
 
 @app.post('/oriented-imagery/portable')
-# Mode B: repost the currently-included browser File objects, re-extract
-# their metadata server-side, convert to privacy-stripped orientation-
-# normalized JPEG derivatives, and package a ZIP. Nothing here reads the
-# upload session's cached rows for pixels -- it only stores metadata, never
-# photo bytes -- so the originals must be reposted fresh for this export.
+# Mode B: repost the currently-included photos, re-extract metadata fresh,
+# convert to privacy-stripped orientation-normalized JPEG derivatives, and
+# package a ZIP. The session never stores photo bytes, so a repost is required.
 async def oriented_imagery_portable(
     request: Request,
     upload_id: str = Form(...),
@@ -919,9 +911,8 @@ async def oriented_imagery_portable(
     if len(photos) > MAX_FILES_PER_UPLOAD:
         raise HTTPException(status_code=400, detail=f'Too many files in one upload (max {MAX_FILES_PER_UPLOAD})')
 
-    # upload_id only scopes this request to a live, non-expired session
-    # (fails closed otherwise); the actual rows come from re-extracting the
-    # reposted files below, per the portable-mode metadata requirement.
+    # upload_id here only confirms a live session (fails closed otherwise);
+    # the rows themselves come from re-extracting the reposted files below.
     try:
         upload_sessions.get_rows(upload_id, row_ids=[])
     except upload_sessions.SessionNotFound:

@@ -33,18 +33,17 @@ const markerLayer = L.layerGroup().addTo(map);
 // remove/clear buttons can find and remove the matching marker.
 let mappedPhotos = []; // { filename, lat, lon, marker, row_id }
 
-// Opaque id for this tab's current upload session (see upload_sessions.py).
-// Every export/Oriented Imagery call must send it; the server refuses to
-// serve another tab's/user's data without a match.
+// Opaque id for this tab's upload session (see upload_sessions.py). Every
+// export/Oriented Imagery call sends it; the server refuses without a match.
 let currentUploadId = null;
 
 function visibleRowIds() {
   return mappedPhotos.map(p => p.row_id).filter(Boolean);
 }
 
-// Best-effort session cleanup. Uses sendBeacon (fire-and-forget, survives
-// page unload) when available so Clear All / picking a new file batch /
-// closing the tab don't leave sessions around for their full 15-minute TTL.
+// Best-effort session cleanup on Clear All / a new upload / tab close, so
+// sessions don't linger for their full 15-minute TTL. sendBeacon survives
+// page unload, unlike a normal fetch.
 function closeSession(uploadId) {
   if (!uploadId) return;
   const url = `/session/${encodeURIComponent(uploadId)}/close`;
