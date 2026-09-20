@@ -1,6 +1,6 @@
-/* exported openLightbox, setCrsForExport */
-// Called from onclick="" attributes in HTML strings to builds itself
-// and enable linting.
+/* exported setCrsForExport */
+// setCrsForExport() is called by the inline handler generated in
+// zonePopupHtml(); keep it global and declare it above for linters.
 
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
@@ -16,7 +16,7 @@ const basemaps = {
     maxZoom: 16,
   }),
   'Imagery + Topo (USGS)': L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', {
-    attribution: 'Tiles courtesy of the <a href="https://usgs.gov">U.S. Geological Survey</a>',
+    attribution: 'Tiles courtesy of the <a href="https://www.usgs.gov/">U.S. Geological Survey</a>',
     maxZoom: 16,
   }),
 };
@@ -350,9 +350,9 @@ function renderCrsOptions() {
 }
 
 // Units toggle
-document.querySelectorAll('.toggle-btn').forEach(btn => {
+document.querySelectorAll('#crs-filter-controls .toggle-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#crs-filter-controls .toggle-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     activeUnits = btn.dataset.units;
     renderCrsOptions();

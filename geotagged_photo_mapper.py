@@ -1,16 +1,10 @@
-"""geotagged_photo_mapper.py
+"""FastAPI backend for upload/EXIF extraction, isolated upload sessions,
+CRS lookup and State Plane reference data, standard GIS exports, and
+Oriented Imagery reference/portable exports.
 
-The backend implementing FastAPI with four tasks:
-  1. Import uploaded photos and pull GPS coordinates from EXIF data.
-  2. Return GPS coordinates to the browser in GeoJSON format for plotting with Leaflet.
-  3. Let the user search for a coordinate reference system (CRS) from a
-     curated list, a region search, a manual EPSG code, or a
-     pasted/uploaded custom definition (WKT or PROJ4).
-  4. Reproject the cached points into the target CRS and stream them back as a file
-     in one of several GIS formats.
-
-Nothing is written to disk except the temporary files needed to build each
-export and the State Plane zone cache described below.
+Persistent writes are limited to State Plane source/cache files and PROJ
+grid files under data/. Request-scoped upload/export files are created in
+temporary directories and removed after each request.
 """
 
 import base64
@@ -285,10 +279,9 @@ def _build_sp_zones_unchecked(cache_path: str) -> dict:
     return result
 
 
-# Return State Plane zone GeoJSON. Three cached layers will include
-# in-memory dict, on-disk file (data/state_plane_zones.geojson), and
-# a full build of _build_sp_zones() if neither exists. An on-disk cache that
-# is unreadable or holds non-finite coordinates is discarded and rebuilt.
+# Return State Plane zone GeoJSON using, in order, the in-memory cache,
+# the validated on-disk cache, or a full rebuild. An unreadable or
+# non-finite on-disk cache is ignored and rebuilt.
 def _get_sp_zones() -> dict:
     global _sp_zones_cache
     if _sp_zones_cache is not None:
