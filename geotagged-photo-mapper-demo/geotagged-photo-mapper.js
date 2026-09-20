@@ -24,7 +24,9 @@ const markerLayer = L.layerGroup().addTo(map);
 
 // ======== STATE ========
 const MAX_PHOTOS = 10;
-let photos = []; // { filename, lat, lon, datetime, marker }
+let photos = []; // { id, filename, lat, lon, datetime, marker }
+// Filenames are not unique, so each photo gets its own id for removal.
+let nextPhotoId = 1;
 
 
 // ======== DOM REFS ========
@@ -116,8 +118,9 @@ async function handleFiles(fileList) {
       const datetime = meta?.DateTimeOriginal ? formatDatetime(meta.DateTimeOriginal) : null;
 
       const marker = addMarker(file.name, lat, lon, datetime);
-      photos.push({ filename: file.name, lat, lon, datetime, marker });
-      addResultItem(file.name, lat, lon, datetime, marker);
+      const id = nextPhotoId++;
+      photos.push({ id, filename: file.name, lat, lon, datetime, marker });
+      addResultItem(id, file.name, lat, lon, datetime, marker);
       mapped++;
     } catch (_) {
       noGps++;
@@ -175,7 +178,7 @@ function fitMapToPhotos() {
 
 
 // ======== RESULTS LIST ========
-function addResultItem(filename, lat, lon, datetime, marker) {
+function addResultItem(id, filename, lat, lon, datetime, marker) {
   const li = document.createElement('li');
   li.innerHTML = `
     <div class="result-text">
@@ -187,7 +190,7 @@ function addResultItem(filename, lat, lon, datetime, marker) {
   `;
   li.querySelector('.remove-btn').addEventListener('click', e => {
     e.stopPropagation();
-    removeDemoPhoto(filename, marker, li);
+    removeDemoPhoto(id, marker, li);
   });
   li.addEventListener('click', () => {
     map.flyTo([lat, lon], 16);
@@ -196,8 +199,8 @@ function addResultItem(filename, lat, lon, datetime, marker) {
   resultsList.appendChild(li);
 }
 
-function removeDemoPhoto(filename, marker, li) {
-  photos = photos.filter(p => p.filename !== filename);
+function removeDemoPhoto(id, marker, li) {
+  photos = photos.filter(p => p.id !== id);
   markerLayer.removeLayer(marker);
   li.remove();
 
@@ -211,14 +214,24 @@ function removeDemoPhoto(filename, marker, li) {
 
 
 // ======== DOWNLOAD CSV ========
+// Quote a text cell and neutralize spreadsheet formula injection: a value that
+// starts with =, +, -, @, tab, CR, or LF gets a leading apostrophe. Only text
+// cells go through this; latitude/longitude stay plain numbers (negative
+// coordinates must not be altered).
+function csvTextCell(value) {
+  let text = String(value);
+  if (/^[=+\-@\t\r\n]/.test(text)) text = "'" + text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 downloadCsvBtn.addEventListener('click', () => {
   const header = 'filename,latitude,longitude,datetime';
   const rows = photos.map(p =>
     [
-      `"${p.filename.replace(/"/g, '""')}"`,
+      csvTextCell(p.filename),
       p.lat,
       p.lon,
-      p.datetime ? `"${p.datetime}"` : '',
+      p.datetime ? csvTextCell(p.datetime) : '',
     ].join(',')
   );
   const csv = [header, ...rows].join('\r\n');

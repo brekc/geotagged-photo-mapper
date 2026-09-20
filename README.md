@@ -16,7 +16,19 @@ The full-featured Python app (export, CRS picker, etc.) requires the local/Docke
 
 ## Local & Private
 
-This app runs as a **local web server** with no account or login. Photos are processed through short-lived, request-scoped temp files that are always cleaned up, and never leave this machine. Outbound connections are limited to basemap tiles (OpenStreetMap, Esri, USGS) and a couple of one-time reference-data downloads described below.
+This app runs as a **local web server** with no account or login. Photos are processed through short-lived, request-scoped temp files that are always cleaned up, and never leave this machine. Photo files and their metadata are never sent to any outside service.
+
+The app does make these **outbound network requests**, none of which carry your photos or their coordinates:
+
+| Request | Made by | When | Destination |
+|---|---|---|---|
+| Leaflet JS/CSS | Your browser | Every page load | `unpkg.com` |
+| Inter font | Your browser | Every page load | `fonts.googleapis.com`, `fonts.gstatic.com` |
+| Basemap tiles (OpenStreetMap, Esri Light Gray, USGS Imagery + Topo) | Your browser | Whenever the map is shown; tile requests reveal the area you are viewing | `tile.openstreetmap.org`, `server.arcgisonline.com`, `basemap.nationalmap.gov` |
+| PROJ datum-shift grids | The server | The first export that needs a high-accuracy grid; cached to `data/proj_cache/` afterward | PROJ's grid CDN (`cdn.proj.org`) |
+| State Plane reference CSV and Census county shapefile | The server | The first time the State Plane layer is turned on; cached to `data/` afterward | `raw.githubusercontent.com`, `www2.census.gov` |
+
+Without internet access the app still starts and exports, but the map will have no basemap or Leaflet styling, exports may use lower-accuracy datum shifts, and the State Plane layer cannot be built (the server answers with an error instead of caching a bad result).
 
 By default it only listens on `localhost`:
 
@@ -39,7 +51,7 @@ Other users then connect to the server machine's private IP, e.g. `http://192.16
 - Restrict inbound port 8000 to a trusted private network (e.g. a firewall rule, or simply an isolated LAN).
 - The application has **no login**.
 - The application has **no TLS**.
-- Upload IDs isolate one person's dataset from another's, but they are **not authentication** -- anyone who can reach the port can use the app as any "user."
+- Upload IDs keep one person's dataset from being accidentally mixed with another's, but they are **not authentication** -- anyone who can reach the port can use the app, and anyone who obtains a valid upload ID can read that session.
 - **Do not** expose it directly to the internet.
 - **Do not** port-forward it.
 - **Do not** run it directly on a public cloud address.
@@ -56,6 +68,8 @@ git clone https://github.com/brekc/geotagged-photo-mapper.git
 ```bash
 cd geotagged-photo-mapper
 ```
+
+**Requires Python 3.11 or newer** (the Conda environment and Docker image both use 3.11).
 
 ### Option A: Conda
 
@@ -121,7 +135,9 @@ Then open **http://localhost:8000**.
 
 > **Windows users:** GDAL and GeoPandas are unreliable via pip on Windows. Use Option A (Conda) or Option B (Docker) instead.
 
-ExifTool must be installed and on your `PATH` first (see step 1 in Option A).
+Requires Python 3.11+ and ExifTool on your `PATH` (see step 1 in Option A).
+
+
 
 ```bash
 python -m venv .venv
@@ -163,7 +179,7 @@ uvicorn geotagged_photo_mapper:app --reload
 ### Backend (Python / FastAPI)
 
 - **`POST /upload`**: Receives image files (JPEG, PNG, HEIC, HEIF), extracts GPS/camera EXIF via PyExifTool, stores the result in a new isolated upload session (see [Multi-User Sessions](#multi-user-sessions)), and returns a GeoJSON FeatureCollection plus the session's `upload_id`
-- **`POST /export`**: Reprojects a session's selected photos to the target CRS through GeoPandas and streams the requested file. Requires the matching `upload_id`; optional `photo_ids` and restrict the export to visible photos
+- **`POST /export`**: Reprojects a session's selected photos to the target CRS through GeoPandas and streams the requested file. Requires the matching `upload_id`; the optional `photo_ids` (a comma-separated list) restricts the export to those photos, which is how removed markers are left out
 - **`DELETE /session/{upload_id}`** / **`POST /session/{upload_id}/close`**: Explicitly and idempotently deletes an upload session (Clear All uses the former; best-effort browser-unload cleanup uses the latter, since `navigator.sendBeacon()` can only POST)
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns UTM or US State Plane zone polygons for the reference layer toggles. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
@@ -204,7 +220,9 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
   - Manual EPSG code override
   - Custom CRS: paste a WKT or PROJ4 string, or upload a `.prj` file, for a project-specific datum or projection that isn't in the EPSG registry; takes priority over the EPSG code field when filled in
 - CSV coordinate columns use `longitude`/`latitude` for geographic CRS and `easting`/`northing` for projected CRS
-- Custom export filename
+- Custom export filename (sanitized: control characters, quotes, semicolons, path separators, drive prefixes and `..` are removed, and the length is capped)
+- Text cells in CSV output that begin with `=`, `+`, `-`, `@`, tab, CR, or LF are prefixed with an apostrophe so spreadsheets do not run them as formulas; numeric coordinates are left untouched
+- Photos are tracked by an internal `photo_id`, not by filename, so photos that share a filename (e.g. `IMG_0001.JPG` from two folders) stay separate and can be removed or exported independently
 - Datum shifts (e.g. NAD83(HARN) &harr; NAD83(2011)) are handled by pyproj/PROJ, not skipped or approximated as identical. The highest-accuracy shift grids aren't bundled with the install, so on first export needing one, PROJ fetches it from its CDN and caches it to `data/proj_cache/` for every export after; if the server has no internet access, exports still work, just at whatever accuracy the bundled grids allow instead of the best available
 
 **Optional export metadata** (applied at download time, columns omitted if left blank)
@@ -218,7 +236,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Oriented Imagery Export**
 
-After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery table (schema reference in [Relevant Resources](#relevant-resources) below) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
+After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery table (schema reference in [Relevant Resources](#relevant-resources) below) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection (`X`/`Y` are transformed into that CRS with the same GeoPandas/PROJ path as the standard exports, and `SRS` names it) and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
 
 - **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Only JPEG/JPG/TIF are referenced; PNG/HEIC/HEIF are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
 - **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
@@ -250,9 +268,11 @@ This store is in-memory and **process-local**, so it only works behind a single 
 | **[Shapely](https://shapely.readthedocs.io/)** | Point geometry creation |
 | **[pyproj](https://pyproj4.github.io/pyproj/)** | CRS database search |
 | **[Leaflet.js](https://leafletjs.com/)** | Interactive map (CDN) |
-| **[OpenStreetMap](https://www.openstreetmap.org/) / [Esri](https://www.esri.com/en-us/arcgis/products/arcgis-living-atlas/services/basemaps) / [USGS](https://basemap.nationalmap.gov/)** | Basemap tile options (no API key required) |
+| **[OpenStreetMap](https://www.openstreetmap.org/) / [Esri](https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer) / [USGS](https://basemap.nationalmap.gov/)** | Basemap tile options (no API key required) |
 
 Python dependencies are managed via Conda (`environment.yml`) or pip (`requirements.txt`).
+
+**Tests:** the project has a pytest suite, but the test files are kept local-only (the `tests/` directory is git-ignored) and are **not included in this public repository**.
 
 ---
 

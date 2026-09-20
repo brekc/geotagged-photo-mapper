@@ -21,12 +21,18 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
+import unicodedata
 import urllib.request
 import uuid
 import zipfile
 from typing import List
+from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
+import shapely
 from exiftool import ExifToolHelper
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
@@ -37,6 +43,7 @@ from shapely.geometry import Point
 
 import pillow_heif
 from features import upload_sessions
+from features.oriented_imagery import csv_safe_text
 
 # Must run before any Image.open() call so .heic/.heif decode like any other format.
 pillow_heif.register_heif_opener()
@@ -79,22 +86,158 @@ except Exception:
 _SP_CSV_URL = 'https://raw.githubusercontent.com/ret3/stateplane/master/state_plane_reference.csv'
 _COUNTIES_URL = 'https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_20m.zip'
 _sp_zones_cache: dict | None = None
+_sp_lock = threading.Lock()
+
+# PROJ can return infinite coordinates when a datum-shift grid is still being
+# fetched (see set_network_enabled above), so the reprojection is checked and
+# retried instead of trusted.
+_SP_REPROJECT_ATTEMPTS = 3
+_SP_REPROJECT_RETRY_DELAY = 1.0
+
+
+class StatePlaneUnavailable(Exception):
+    pass
+
+
+def _all_finite(node) -> bool:
+    if isinstance(node, (list, tuple)):
+        return len(node) > 0 and all(_all_finite(n) for n in node)
+    return isinstance(node, (int, float)) and not isinstance(node, bool) and math.isfinite(node)
+
+
+# A usable State Plane cache is a non-empty FeatureCollection whose every
+# coordinate is a finite number. json.load() happily accepts Infinity/NaN, so
+# this has to be checked explicitly.
+def _valid_sp_geojson(data) -> bool:
+    if not isinstance(data, dict) or data.get('type') != 'FeatureCollection':
+        return False
+    features = data.get('features')
+    if not isinstance(features, list) or not features:
+        return False
+    for feature in features:
+        if not isinstance(feature, dict):
+            return False
+        props = feature.get('properties')
+        if not isinstance(props, dict) or props.get('epsg') is None or not props.get('name'):
+            return False
+        geometry = feature.get('geometry')
+        if not isinstance(geometry, dict) or not _all_finite(geometry.get('coordinates')):
+            return False
+    return True
+
+
+def _read_sp_cache(cache_path: str) -> dict | None:
+    try:
+        with open(cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if _valid_sp_geojson(data) else None
+
+
+# Write to a temp file in the same directory and swap it in, so a crash or a
+# concurrent reader never sees a half-written cache.
+def _write_sp_cache(cache_path: str, data: dict) -> None:
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(cache_path), prefix='.state_plane_', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, cache_path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+# Download to a .part file first so an interrupted transfer never leaves a
+# truncated file that later looks like a valid cached input.
+def _download(url: str, dest: str) -> None:
+    part = dest + '.part'
+    try:
+        urllib.request.urlretrieve(url, part)
+        os.replace(part, dest)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
+def _zones_are_finite(gdf) -> bool:
+    if len(gdf) == 0 or gdf.geometry.isna().any() or gdf.geometry.is_empty.any():
+        return False
+    return bool(np.isfinite(gdf.geometry.bounds.to_numpy()).all())
+
+
+# The zone outlines are only a map overlay, so they do not need a sub-metre
+# datum shift. Reprojecting with a grid-based NAD83 -> WGS 84 operation makes
+# PROJ fetch datum grids over the network mid-transform; on a cold cache that
+# fetch fails inside the server and the transform silently yields infinite
+# coordinates. So this layer uses PROJ's grid-free operation (about 1-4 m,
+# invisible at map scale). PROJ networking itself stays enabled for exports.
+def _reproject_zones_to_wgs84(zones_gdf):
+    from pyproj.transformer import TransformerGroup  # local: keeps the protected PROJ import block untouched
+
+    group = TransformerGroup(zones_gdf.crs, 'EPSG:4326', always_xy=True)
+
+    def _needs_grid(transformer) -> bool:
+        ops = transformer.operations
+        if ops:
+            return any(op.grids for op in ops)
+        return 'grid' in transformer.definition
+
+    gridless = [t for t in group.transformers if not _needs_grid(t)]
+    if not gridless:
+        return zones_gdf.to_crs('EPSG:4326')
+    transformer = gridless[0]
+    geoms = np.array(list(zones_gdf.geometry), dtype=object)
+    projected = shapely.transform(geoms, lambda c: np.column_stack(transformer.transform(c[:, 0], c[:, 1])))
+    return zones_gdf.set_geometry(gpd.GeoSeries(projected, index=zones_gdf.index, crs='EPSG:4326'))
+
+
+def _reproject_zones_checked(zones_gdf):
+    for attempt in range(_SP_REPROJECT_ATTEMPTS):
+        projected = _reproject_zones_to_wgs84(zones_gdf)
+        if _zones_are_finite(projected):
+            return projected
+        if attempt < _SP_REPROJECT_ATTEMPTS - 1:
+            time.sleep(_SP_REPROJECT_RETRY_DELAY)
+    raise StatePlaneUnavailable(
+        'State Plane zone reprojection produced invalid coordinates (PROJ may still be '
+        'fetching datum-shift grids). Nothing was cached; try again shortly.'
+    )
 
 
 # Build US State Plane zones by joining a state plane reference CSV and the
 # Census Bureau's county boundaries. Dissolving by zone and caching the result
-# will keep the NAD83 zones as a reference layer.
+# will keep the NAD83 zones as a reference layer. Raises StatePlaneUnavailable
+# (and caches nothing) if the inputs cannot be fetched or the result is invalid.
 def _build_sp_zones(cache_path: str) -> dict:
+    try:
+        return _build_sp_zones_unchecked(cache_path)
+    except StatePlaneUnavailable:
+        raise
+    except Exception as e:
+        # Generic on purpose: the raw error can contain server filesystem paths.
+        raise StatePlaneUnavailable(
+            f'State Plane zones could not be generated ({type(e).__name__}). '
+            'Check the server\'s internet access and try again.'
+        ) from e
+
+
+def _build_sp_zones_unchecked(cache_path: str) -> dict:
     os.makedirs(_DATA_DIR, exist_ok=True)
 
     csv_path = os.path.join(_DATA_DIR, 'state_plane_reference.csv')
     if not os.path.exists(csv_path):
-        urllib.request.urlretrieve(_SP_CSV_URL, csv_path)
+        _download(_SP_CSV_URL, csv_path)
 
     counties_dir = os.path.join(_DATA_DIR, 'counties_20m')
-    if not os.path.exists(counties_dir):
+    if not (os.path.isdir(counties_dir) and any(f.endswith('.shp') for f in os.listdir(counties_dir))):
         zip_path = os.path.join(_DATA_DIR, 'cb_2023_us_county_20m.zip')
-        urllib.request.urlretrieve(_COUNTIES_URL, zip_path)
+        _download(_COUNTIES_URL, zip_path)
         os.makedirs(counties_dir, exist_ok=True)
         with zipfile.ZipFile(zip_path, 'r') as zf:
             zf.extractall(counties_dir)
@@ -117,7 +260,7 @@ def _build_sp_zones(cache_path: str) -> dict:
     # Dissolve counties into one polygon per zone.
     merged = counties_gdf.merge(sp_df, on='fips', how='inner')
     zones_gdf = merged.dissolve(by='nad83_epsg').reset_index()
-    zones_gdf = zones_gdf.to_crs('EPSG:4326')
+    zones_gdf = _reproject_zones_checked(zones_gdf)
 
     # Need human-readable name and area-of-use for map popups.
     def _crs_info(epsg: int):
@@ -136,25 +279,29 @@ def _build_sp_zones(cache_path: str) -> dict:
     )
 
     result = json.loads(zones_gdf.to_json())
-    with open(cache_path, 'w') as f:
-        json.dump(result, f)
+    if not _valid_sp_geojson(result):
+        raise StatePlaneUnavailable('State Plane zone output failed validation; nothing was cached.')
+    _write_sp_cache(cache_path, result)
     return result
 
 
 # Return State Plane zone GeoJSON. Three cached layers will include
 # in-memory dict, on-disk file (data/state_plane_zones.geojson), and
-# a full build of _build_sp_zones() if neither exists.
+# a full build of _build_sp_zones() if neither exists. An on-disk cache that
+# is unreadable or holds non-finite coordinates is discarded and rebuilt.
 def _get_sp_zones() -> dict:
     global _sp_zones_cache
     if _sp_zones_cache is not None:
         return _sp_zones_cache
-    cache_path = os.path.join(_DATA_DIR, 'state_plane_zones.geojson')
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            _sp_zones_cache = json.load(f)
-        return _sp_zones_cache
-    _sp_zones_cache = _build_sp_zones(cache_path)
-    return _sp_zones_cache
+    with _sp_lock:
+        if _sp_zones_cache is not None:
+            return _sp_zones_cache
+        cache_path = os.path.join(_DATA_DIR, 'state_plane_zones.geojson')
+        data = _read_sp_cache(cache_path)
+        if data is None:
+            data = _build_sp_zones(cache_path)
+        _sp_zones_cache = data
+        return data
 
 
 # Expand two-letter state and province codes to full names for CRS area-of-use matching.
@@ -227,6 +374,65 @@ def _display_filename(original_name: str) -> str:
     base = os.path.basename((original_name or 'photo').replace('\\', '/'))
     base = ''.join(ch for ch in base if ch.isprintable())
     return base[:200] or 'photo'
+
+
+_MAX_EXPORT_NAME_LENGTH = 100
+_WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL',
+    *(f'COM{i}' for i in range(1, 10)),
+    *(f'LPT{i}' for i in range(1, 10)),
+}
+
+
+# The one sanitizer for every user-supplied export name: it feeds both the
+# on-disk/layer names and the Content-Disposition header. Strips control
+# characters (CR, LF, NUL, U+2028...), drive prefixes, path separators and
+# traversal segments, replaces quotes, semicolons and other characters that
+# are unsafe in a header or on Windows, and bounds the length. Anything that
+# ends up empty falls back to `fallback`.
+def _safe_export_name(raw: str | None, fallback: str) -> str:
+    text = unicodedata.normalize('NFC', raw or '')
+    text = ''.join(
+        ch for ch in text
+        if unicodedata.category(ch)[0] != 'C' and unicodedata.category(ch) not in ('Zl', 'Zp')
+    )
+    text = re.sub(r'^\s*[A-Za-z]:', '', text.replace('\\', '/'))
+    segments = [seg for seg in text.split('/') if seg.strip() and seg.strip() not in ('.', '..')]
+    text = segments[-1] if segments else ''
+    text = re.sub(r'["\';:*?<>|%]', '_', text)
+    text = text.strip(' ._')[:_MAX_EXPORT_NAME_LENGTH].strip(' ._')
+    if not text or set(text) <= {'_'}:
+        return fallback
+    if text.split('.')[0].upper() in _WINDOWS_RESERVED_NAMES:
+        text = '_' + text
+    return text
+
+
+# Content-Disposition for a download. Non-ASCII names get an ASCII fallback
+# plus an RFC 5987 filename* so the header itself is always valid latin-1.
+def _attachment_headers(stem: str, suffix: str, extra: dict | None = None) -> dict:
+    filename = f'{stem}{suffix}'
+    try:
+        filename.encode('ascii')
+        disposition = f'attachment; filename="{filename}"'
+    except UnicodeEncodeError:
+        fallback = filename.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+        disposition = f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+    headers = {'Content-Disposition': disposition}
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+# Neutralize spreadsheet formula injection in text cells of a DataFrame before
+# CSV export. Only real strings are touched, so numeric columns (including
+# negative coordinates) stay numeric.
+def _csv_safe_frame(df):
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object or pd.api.types.is_string_dtype(df[col]):
+            df[col] = df[col].map(lambda v: csv_safe_text(v) if isinstance(v, str) else v)
+    return df
 
 
 def _validate_upload_extension(filename: str, content_type: str | None) -> str:
@@ -327,7 +533,11 @@ def _as_int(value):
 # Extract GPS and camera metadata via ExifTool. Returns (features, errors)
 # rather than raising on a bad photo, so one unreadable/missing-GPS file
 # never drops the rest of the batch.
-def extract_gps(file_paths, display_names: list[str] | None = None):
+#
+# `upload_indexes[i]` is the position of file_paths[i] in the original upload.
+# It is stamped on each feature as `upload_index`, so photos that share a
+# filename can still be told apart and matched back to their uploaded file.
+def extract_gps(file_paths, display_names: list[str] | None = None, upload_indexes: list[int] | None = None):
     display_names = display_names or []
     features = []
     errors = []
@@ -335,10 +545,11 @@ def extract_gps(file_paths, display_names: list[str] | None = None):
         metadata_list = et.get_metadata(file_paths)
     for i, meta in enumerate(metadata_list):
         filename = display_names[i] if i < len(display_names) else os.path.basename(meta.get('SourceFile', ''))
+        index_fields = {'upload_index': upload_indexes[i]} if upload_indexes and i < len(upload_indexes) else {}
 
         et_error = meta.get('ExifTool:Error')
         if et_error:
-            errors.append({'filename': filename, 'error': f'Unreadable metadata: {et_error}'})
+            errors.append({'filename': filename, 'error': f'Unreadable metadata: {et_error}', **index_fields})
             continue
 
         # Prefer Composite tags (signed decimal degrees); fall back to raw EXIF.
@@ -348,14 +559,14 @@ def extract_gps(file_paths, display_names: list[str] | None = None):
         lon = _coalesce(composite_lon, meta.get('EXIF:GPSLongitude'))
 
         if lat is None or lon is None:
-            errors.append({'filename': filename, 'error': 'No GPS data found in this photo.'})
+            errors.append({'filename': filename, 'error': 'No GPS data found in this photo.', **index_fields})
             continue
 
         try:
             lat = float(lat)
             lon = float(lon)
         except (TypeError, ValueError):
-            errors.append({'filename': filename, 'error': 'Unreadable GPS coordinates.'})
+            errors.append({'filename': filename, 'error': 'Unreadable GPS coordinates.', **index_fields})
             continue
 
         # Raw EXIF tags are unsigned; apply Ref tag sign if used.
@@ -365,7 +576,7 @@ def extract_gps(file_paths, display_names: list[str] | None = None):
             lon = -abs(lon)
 
         if not (math.isfinite(lat) and math.isfinite(lon)) or not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-            errors.append({'filename': filename, 'error': 'GPS coordinates out of range.'})
+            errors.append({'filename': filename, 'error': 'GPS coordinates out of range.', **index_fields})
             continue
 
         composite_alt = meta.get('Composite:GPSAltitude')
@@ -379,6 +590,7 @@ def extract_gps(file_paths, display_names: list[str] | None = None):
 
         features.append({
             'filename': filename,
+            **index_fields,
             'latitude': lat,
             'longitude': lon,
             'altitude_m': altitude_m,
@@ -454,17 +666,43 @@ def _resolve_target_crs(epsg: str, custom_crs: str) -> CRS:
     raise HTTPException(status_code=400, detail='No EPSG code or custom CRS provided')
 
 
+# Only an exact EPSG match is reported by code; a looser guess could label
+# coordinates with a CRS they are not actually in, so anything else is
+# written as WKT.
 def _srs_label(target_crs: CRS) -> str:
-    epsg = target_crs.to_epsg()
+    epsg = target_crs.to_epsg(min_confidence=100)
     return str(epsg) if epsg is not None else target_crs.to_wkt()
+
+
+# Transform each row's WGS 84 longitude/latitude into the target CRS through
+# the same GeoPandas/PROJ path the standard exports use. Returns copies whose
+# `longitude`/`latitude` hold the target CRS's X/Y (so Oriented Imagery X/Y
+# always agree with its SRS). A row whose result is not finite is flagged with
+# `reprojection_failed` and its coordinates blanked instead of exported.
+def _reproject_rows(rows: list[dict], target_crs: CRS) -> list[dict]:
+    if not rows:
+        return []
+    geometries = [Point(r['longitude'], r['latitude']) for r in rows]
+    projected = gpd.GeoDataFrame({'_i': range(len(rows))}, geometry=geometries, crs='EPSG:4326').to_crs(target_crs)
+    out = []
+    for row, geom in zip(rows, projected.geometry):
+        new_row = dict(row)
+        x, y = (geom.x, geom.y) if geom is not None and not geom.is_empty else (float('nan'), float('nan'))
+        if math.isfinite(x) and math.isfinite(y):
+            new_row['longitude'], new_row['latitude'] = x, y
+        else:
+            new_row['longitude'] = new_row['latitude'] = None
+            new_row['reprojection_failed'] = True
+        out.append(new_row)
+    return out
 
 
 def _rows_geodataframe(rows: list[dict]):
     geometries = [Point(f['longitude'], f['latitude']) for f in rows]
     properties = [
-        # latitude/longitude become the geometry; photo_id is a random,
-        # session-scoped token with no meaning once the file is downloaded.
-        {k: v for k, v in f.items() if k not in ('latitude', 'longitude', 'photo_id')}
+        # latitude/longitude become the geometry; photo_id and upload_index are
+        # session-scoped bookkeeping with no meaning once the file is downloaded.
+        {k: v for k, v in f.items() if k not in ('latitude', 'longitude', 'photo_id', 'upload_index')}
         for f in rows
     ]
     return gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
@@ -523,11 +761,14 @@ async def upload(
     try:
         saved_paths = []
         display_names = []
-        previews: dict[str, str] = {}
+        upload_indexes = []
+        preview_by_index: dict[int, str] = {}
         errors = []
         total_bytes = 0
 
-        for f in photos:
+        # A filename is not unique (two folders can each hold IMG_0001.JPG), so
+        # each file is identified by its position in this upload.
+        for upload_index, f in enumerate(photos):
             original_name = f.filename or 'photo'
             display_name = _display_filename(original_name)
             try:
@@ -546,11 +787,12 @@ async def upload(
 
                 saved_paths.append(dest)
                 display_names.append(display_name)
+                upload_indexes.append(upload_index)
 
                 if ext in HEIC_EXTENSIONS:
                     preview = _build_heic_preview(dest)
                     if preview:
-                        previews[display_name] = preview
+                        preview_by_index[upload_index] = preview
                     else:
                         errors.append({
                             'filename': display_name,
@@ -562,14 +804,10 @@ async def upload(
                 await f.close()
 
         if saved_paths:
-            features, gps_errors = extract_gps(saved_paths, display_names)
+            features, gps_errors = extract_gps(saved_paths, display_names, upload_indexes)
             errors.extend(gps_errors)
         else:
             features = []
-
-        geojson = build_geojson(features) if features else json.dumps({
-            'type': 'FeatureCollection', 'features': []
-        })
 
         upload_id = upload_sessions.create_session()
         try:
@@ -578,15 +816,16 @@ async def upload(
             upload_sessions.delete_session(upload_id)
             raise HTTPException(status_code=429, detail=str(e))
 
-        # Re-key the returned GeoJSON properties with each row's session id so
-        # the frontend can address markers/exports by photo_id.
-        photo_id_by_filename = {r['filename']: r['photo_id'] for r in stored_rows}
-        geojson_obj = json.loads(geojson)
-        for feature in geojson_obj.get('features', []):
-            props = feature.get('properties') or {}
-            photo_id = photo_id_by_filename.get(props.get('filename'))
-            if photo_id:
-                props['photo_id'] = photo_id
+        # The GeoJSON is built from the stored rows, so every feature carries
+        # its own photo_id (and upload_index) with no filename-based lookup.
+        geojson_obj = json.loads(build_geojson(stored_rows)) if stored_rows else {
+            'type': 'FeatureCollection', 'features': [],
+        }
+        # Previews are keyed by photo_id: photos that share a filename each keep their own.
+        previews = {
+            r['photo_id']: preview_by_index[r['upload_index']]
+            for r in stored_rows if r['upload_index'] in preview_by_index
+        }
 
         return {
             'upload_id': upload_id,
@@ -623,7 +862,10 @@ async def close_session(upload_id: str):
 def zone_geojson(zone_type: str = Query(..., alias='type')):
     if zone_type != 'state_plane':
         raise HTTPException(status_code=400, detail='type must be state_plane')
-    return _get_sp_zones()
+    try:
+        return _get_sp_zones()
+    except StatePlaneUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @app.get('/crs-search')
@@ -670,7 +912,7 @@ async def export(
     fmt = format.lower()
 
     # Sanitize for an internal layer name.
-    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'photo_locations'
+    name = _safe_export_name(export_name, 'photo_locations')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
     rows = _get_session_rows(upload_id, photo_ids)
@@ -712,13 +954,13 @@ async def export(
             else:
                 csv_gdf['easting'] = csv_gdf.geometry.x
                 csv_gdf['northing'] = csv_gdf.geometry.y
-            csv_gdf = csv_gdf.drop(columns='geometry')
+            csv_gdf = _csv_safe_frame(csv_gdf.drop(columns='geometry'))
             buf = io.StringIO()
             csv_gdf.to_csv(buf, index=False)
             return Response(
                 content=buf.getvalue().encode(),
                 media_type='text/csv',
-                headers={'Content-Disposition': f'attachment; filename="{name}.csv"'},
+                headers=_attachment_headers(name, '.csv'),
             )
 
         elif fmt == 'filegdb':
@@ -737,7 +979,7 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/zip',
-                headers={'Content-Disposition': f'attachment; filename="{name}_gdb.zip"'},
+                headers=_attachment_headers(name, '_gdb.zip'),
             )
 
         elif fmt == 'geojson':
@@ -748,7 +990,7 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/geo+json',
-                headers={'Content-Disposition': f'attachment; filename="{name}.geojson"'},
+                headers=_attachment_headers(name, '.geojson'),
             )
 
         elif fmt == 'geopackage':
@@ -759,7 +1001,7 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/geopackage+sqlite3',
-                headers={'Content-Disposition': f'attachment; filename="{name}.gpkg"'},
+                headers=_attachment_headers(name, '.gpkg'),
             )
 
         elif fmt == 'kml':
@@ -774,7 +1016,7 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/vnd.google-earth.kml+xml',
-                headers={'Content-Disposition': f'attachment; filename="{name}.kml"'},
+                headers=_attachment_headers(name, '.kml'),
             )
 
         elif fmt == 'shapefile':
@@ -794,7 +1036,7 @@ async def export(
             return Response(
                 content=content,
                 media_type='application/zip',
-                headers={'Content-Disposition': f'attachment; filename="{name}_shp.zip"'},
+                headers=_attachment_headers(name, '_shp.zip'),
             )
 
         else:
@@ -810,10 +1052,16 @@ async def export(
 async def oriented_imagery_preflight(
     upload_id: str = Form(...),
     photo_ids: str = Form(default=''),
+    epsg: str = Form(default=''),
+    custom_crs: str = Form(default=''),
 ):
     from features.oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
 
     rows = _get_session_rows(upload_id, photo_ids)
+    # With a CRS selected, count against the reprojected coordinates so a row
+    # that cannot be transformed shows up as excluded here, not only in the export.
+    if epsg.strip() or custom_crs.strip():
+        rows = _reproject_rows(rows, _resolve_target_crs(epsg, custom_crs))
     return build_preflight(rows)
 
 
@@ -835,22 +1083,21 @@ async def oriented_imagery_reference(
         raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    rows = _get_session_rows(upload_id, photo_ids)
+    rows = _reproject_rows(_get_session_rows(upload_id, photo_ids), target_crs)
 
     try:
         result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
     except InvalidBaseLocation as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'oriented_imagery'
+    name = _safe_export_name(export_name, 'oriented_imagery')
     return Response(
         content=result['csv'].encode('utf-8'),
         media_type='text/csv',
-        headers={
-            'Content-Disposition': f'attachment; filename="{name}.csv"',
+        headers=_attachment_headers(name, '.csv', {
             'X-Oriented-Imagery-Row-Count': str(result['row_count']),
             'X-Oriented-Imagery-Excluded-Count': str(result['excluded_count']),
-        },
+        }),
     )
 
 
@@ -870,7 +1117,7 @@ async def oriented_imagery_reference_preview(
         raise HTTPException(status_code=400, detail='OrientedImageryType must be explicitly selected.')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    rows = _get_session_rows(upload_id, photo_ids)
+    rows = _reproject_rows(_get_session_rows(upload_id, photo_ids), target_crs)
 
     try:
         result = build_reference_export(rows, base_location, _srs_label(target_crs), oriented_imagery_type)
@@ -894,6 +1141,7 @@ async def oriented_imagery_portable(
     request: Request,
     upload_id: str = Form(...),
     oriented_imagery_type: str = Form(...),
+    photo_ids: str = Form(default=''),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
     export_name: str = Form(default='oriented_imagery'),
@@ -913,15 +1161,22 @@ async def oriented_imagery_portable(
     if len(photos) > MAX_FILES_PER_UPLOAD:
         raise HTTPException(status_code=400, detail=f'Too many files in one upload (max {MAX_FILES_PER_UPLOAD})')
 
-    # upload_id here only confirms a live session (fails closed otherwise);
-    # the rows themselves come from re-extracting the reposted files below.
+    # upload_id confirms a live session (fails closed otherwise); the rows
+    # themselves come from re-extracting the reposted files below.
     try:
-        upload_sessions.get_rows(upload_id, photo_ids=[])
+        session_photo_ids = {r['photo_id'] for r in upload_sessions.get_rows(upload_id)}
     except upload_sessions.SessionNotFound:
         raise HTTPException(status_code=404, detail='Unknown or expired upload session. Upload photos again.')
 
+    # photo_ids, when sent, is parallel to `photos`: entry N names the session
+    # photo that file N is a repost of. That position (never the filename) is
+    # what ties each file to its metadata, so duplicate filenames stay separate.
+    repost_ids = _parse_photo_ids(photo_ids)
+    if repost_ids is not None and len(repost_ids) != len(photos):
+        raise HTTPException(status_code=400, detail='photo_ids must list one id per uploaded photo.')
+
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    name = re.sub(r'[\\/:*?"<>|]', '_', export_name.strip()) or 'oriented_imagery'
+    name = _safe_export_name(export_name, 'oriented_imagery')
 
     tmp_dir = tempfile.mkdtemp()
     try:
@@ -930,10 +1185,14 @@ async def oriented_imagery_portable(
         items = []
         total_bytes = 0
 
-        for f in photos:
+        upload_indexes = []
+
+        for upload_index, f in enumerate(photos):
             original_name = f.filename or 'photo'
             display_name = _display_filename(original_name)
             try:
+                if repost_ids is not None and repost_ids[upload_index] not in session_photo_ids:
+                    raise ValueError('Photo is no longer part of this upload session')
                 ext = _validate_upload_extension(original_name, f.content_type)
                 remaining = MAX_TOTAL_UPLOAD_BYTES - total_bytes
                 if remaining <= 0:
@@ -947,7 +1206,8 @@ async def oriented_imagery_portable(
 
                 saved_paths.append(dest)
                 display_names.append(display_name)
-                items.append(PortableItem(display_name=display_name, source_path=dest))
+                upload_indexes.append(upload_index)
+                items.append(PortableItem(display_name=display_name, source_path=dest, key=upload_index))
             except ValueError:
                 continue  # unsupported/oversized files are simply excluded from the package
             finally:
@@ -956,7 +1216,8 @@ async def oriented_imagery_portable(
         if not saved_paths:
             raise HTTPException(status_code=400, detail='No supported photos were received.')
 
-        rows_meta, _errors = extract_gps(saved_paths, display_names)
+        rows_meta, _errors = extract_gps(saved_paths, display_names, upload_indexes)
+        rows_meta = _reproject_rows(rows_meta, target_crs)
 
         try:
             zip_bytes = build_portable_package(
@@ -968,7 +1229,7 @@ async def oriented_imagery_portable(
         return Response(
             content=zip_bytes,
             media_type='application/zip',
-            headers={'Content-Disposition': f'attachment; filename="{name}.zip"'},
+            headers=_attachment_headers(name, '.zip'),
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

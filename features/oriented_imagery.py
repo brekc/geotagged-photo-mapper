@@ -35,7 +35,7 @@ import re
 import time
 import zipfile
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from PIL import Image, ImageOps
 
@@ -84,11 +84,11 @@ VENDOR_POSE_TAGS = (
 # CSV safety
 # ---------------------------------------------------------------------------
 
-_CSV_DANGEROUS_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
+_CSV_DANGEROUS_PREFIXES = ('=', '+', '-', '@', '\t', '\r', '\n')
 
 
 # Escape a free-text CSV cell against formula injection (OWASP-style:
-# prefix a leading =, +, -, @, tab, or CR with an apostrophe). Never
+# prefix a leading =, +, -, @, tab, CR, or LF with an apostrophe). Never
 # applied to numeric fields -- see _TEXT_FIELDS -- since quoting a
 # legitimate negative coordinate would corrupt it for GIS ingestion.
 def csv_safe_text(value) -> str:
@@ -127,6 +127,7 @@ def write_oriented_imagery_csv(rows: list[dict]) -> str:
 _ALLOWED_URL_SCHEMES = {'http', 'https'}
 _MAX_BASE_LOCATION_LENGTH = 500
 _CONTROL_CHAR_RE = re.compile(r'[\x00-\x1f\x7f]')
+_WINDOWS_DRIVE_RE = re.compile(r'^[A-Za-z]:[\\/]')
 
 
 class InvalidBaseLocation(ValueError):
@@ -157,20 +158,38 @@ def validate_base_location(raw: str) -> tuple[str, str]:
             raise InvalidBaseLocation('URLs with embedded credentials are not allowed.')
         if not parts.hostname:
             raise InvalidBaseLocation('URL is missing a host.')
-        normalized = text if text.endswith('/') else text + '/'
-        return 'url', normalized
+        # The trailing slash belongs on the path, not after any ?query.
+        path = parts.path if parts.path.endswith('/') else parts.path + '/'
+        return 'url', urlunsplit((parts.scheme, parts.netloc, path, parts.query, ''))
 
     if text.startswith('\\\\'):
-        return 'unc', text if text.endswith('\\') else text + '\\'
+        # UNC paths are always backslash-separated.
+        return 'unc', text.replace('/', '\\').rstrip('\\') + '\\'
 
-    if re.match(r'^[A-Za-z]:[\\/]', text) or text.startswith('/'):
-        sep = '\\' if '\\' in text else '/'
-        return 'local', text if text.endswith(('\\', '/')) else text + sep
+    if _WINDOWS_DRIVE_RE.match(text):
+        # Drive-letter paths are always backslash-separated, even if typed with forward slashes.
+        return 'local', text.replace('/', '\\').rstrip('\\') + '\\'
+
+    if text.startswith('/'):
+        # POSIX paths are always forward-slash-separated.
+        return 'local', text.rstrip('/') + '/'
 
     raise InvalidBaseLocation(
         'Enter an absolute local path (C:\\...), a UNC path (\\\\server\\share\\...), '
         'or an http(s):// URL.'
     )
+
+
+# Join a validated, normalized base location (from validate_base_location)
+# and a bare filename using the separator that base uses: `/` for POSIX paths
+# and URLs (URL filenames are percent-encoded), `\` for drive-letter and UNC paths.
+def join_reference_path(kind: str, normalized_base: str, name: str) -> str:
+    if kind == 'url':
+        parts = urlsplit(normalized_base)
+        path = parts.path.rstrip('/') + '/' + quote(name, safe='')
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ''))
+    sep = '\\' if kind == 'unc' or _WINDOWS_DRIVE_RE.match(normalized_base) else '/'
+    return normalized_base.rstrip('\\/') + sep + name
 
 
 MODE_A_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.tif', '.tiff'}
@@ -230,8 +249,12 @@ def build_row(
     # `pixels_normalized` is True in portable mode, where the derivative JPEG
     # has already had EXIF orientation baked into its pixels.
     try:
+        # `latitude`/`longitude` hold this row's X/Y already expressed in the
+        # CRS named by srs_label (the caller reprojects before building rows).
         lat = meta.get('latitude')
         lon = meta.get('longitude')
+        if meta.get('reprojection_failed'):
+            return RowResult(row=None, status='excluded', warnings=['reprojection_failed'])
         if lat is None or lon is None:
             return RowResult(row=None, status='excluded', warnings=['no_gps_data'])
 
@@ -373,11 +396,11 @@ def build_reference_export(
     # Build oriented_imagery.csv for Mode A. Returns a dict with the CSV
     # text, a short preview of resolved paths, per-file warnings, and counts.
     kind, normalized_base = validate_base_location(base_location)
-    sep = '\\' if kind in ('local', 'unc') else '/'
 
     rows = []
     file_warnings = []
     excluded = 0
+    seen_names: set[str] = set()
     for i, meta in enumerate(rows_meta, start=1):
         display_name = meta.get('filename', f'photo_{i}')
         ext = os.path.splitext(display_name)[1].lower()
@@ -395,10 +418,14 @@ def build_reference_export(
             continue
 
         clean_name = display_name.replace('\\', '').replace('/', '')
-        if kind == 'url':
-            image_path = normalized_base + clean_name
-        else:
-            image_path = normalized_base.rstrip(sep) + sep + clean_name
+        image_path = join_reference_path(kind, normalized_base, clean_name)
+        if clean_name in seen_names:
+            # Same base + same name is the same ImagePath, so this row cannot point at its own image.
+            file_warnings.append({
+                'filename': display_name,
+                'warning': 'duplicate_filename: shares an ImagePath with another photo of the same name.',
+            })
+        seen_names.add(clean_name)
 
         result = build_row(meta, display_name, image_path, srs_label, oriented_imagery_type, i, pixels_normalized=False)
         if result.row is None:
@@ -469,10 +496,14 @@ def _build_derivative_jpeg(source_path: str) -> bytes:
         return buf.getvalue()
 
 
+# `key` is the file's position in the upload; it is matched against each
+# metadata row's `upload_index` so duplicate filenames never share metadata.
+# Without a key, rows fall back to matching by display name, in order.
 @dataclass
 class PortableItem:
     display_name: str
     source_path: str
+    key: int | None = None
 
 
 def build_portable_package(
@@ -486,7 +517,11 @@ def build_portable_package(
     # in memory. Raises PortablePackageTooLarge if the bounded size is
     # exceeded. Caller is responsible for deleting `items[*].source_path`
     # (request-scoped temp files) in a finally block.
-    meta_by_name = {m.get('filename'): m for m in rows_meta}
+    meta_by_key = {m['upload_index']: m for m in rows_meta if m.get('upload_index') is not None}
+    unkeyed_by_name: dict[str, list[dict]] = {}
+    for m in rows_meta:
+        if m.get('upload_index') is None:
+            unkeyed_by_name.setdefault(m.get('filename'), []).append(m)
 
     rows = []
     manifest_entries = []
@@ -495,7 +530,11 @@ def build_portable_package(
     images: dict[str, bytes] = {}
 
     for i, item in enumerate(items, start=1):
-        meta = meta_by_name.get(item.display_name)
+        if item.key is not None:
+            meta = meta_by_key.get(item.key)
+        else:
+            candidates = unkeyed_by_name.get(item.display_name)
+            meta = candidates.pop(0) if candidates else None
         if meta is None or meta.get('latitude') is None:
             file_warnings.append({'filename': item.display_name, 'warning': 'no_gps_data'})
             continue

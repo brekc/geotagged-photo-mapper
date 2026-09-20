@@ -1,4 +1,4 @@
-"""upload_sessions.py
+"""features/upload_sessions.py
 
 Isolated, in-memory upload sessions so multiple users on the same trusted LAN
 never read or overwrite each other's mapped photos.

@@ -31,9 +31,9 @@ const markerLayer = L.layerGroup().addTo(map);
 // ======== STATE ========
 // One entry per photo currently on the map, so the results list and the
 // remove/clear buttons can find and remove the matching marker.
-let mappedPhotos = []; // { filename, lat, lon, marker, photo_id }
+let mappedPhotos = []; // { filename, lat, lon, marker, photo_id, upload_index }
 
-// Opaque id for this tab's upload session (see upload_sessions.py). Every
+// Opaque id for this tab's upload session (see features/upload_sessions.py). Every
 // export/Oriented Imagery call sends it; the server refuses without a match.
 let currentUploadId = null;
 
@@ -64,9 +64,14 @@ const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clear-btn');
 
 let selectedFiles = [];
-// filename -> local blob URL for thumbnails. Photos do not leave the browser
-// until Upload is clicked.
-let photoURLs = new Map();
+// Files as they were when Upload was clicked, indexed by upload_index. Filenames
+// are not unique (two folders can each hold IMG_0001.JPG), so every lookup back
+// to a file goes through this index or the server's photo_id, never the name.
+let uploadedFiles = [];
+// Thumbnail URL for each selected file, by position in selectedFiles (a local
+// blob URL, or a server-made preview for HEIC/HEIF). Photos do not leave the
+// browser until Upload is clicked.
+let photoURLs = [];
 
 // Some browsers/OSes report no useful Content-Type for HEIC/HEIF (often
 // "" or "application/octet-stream"), so fall back to the extension.
@@ -77,14 +82,14 @@ function isSupportedImage(f) {
 
 function setFiles(files) {
   // Revoke previous object URLs to avoid leaking them from the session
-  photoURLs.forEach(url => { if (url.startsWith('blob:')) URL.revokeObjectURL(url); });
-  photoURLs = new Map();
+  photoURLs.forEach(url => { if (url && url.startsWith('blob:')) URL.revokeObjectURL(url); });
+  photoURLs = [];
 
   selectedFiles = Array.from(files).filter(isSupportedImage);
   selectedFiles.forEach(f => {
     // HEIC/HEIF blob URLs won't render in most browsers' <img> tags; the
     // server-generated preview from /upload replaces these afterward.
-    photoURLs.set(f.name, URL.createObjectURL(f));
+    photoURLs.push(URL.createObjectURL(f));
   });
 
   if (selectedFiles.length === 0) {
@@ -127,7 +132,8 @@ uploadBtn.addEventListener('click', async () => {
   const previousUploadId = currentUploadId;
 
   const formData = new FormData();
-  selectedFiles.forEach(f => formData.append('photos', f));
+  const filesInThisUpload = selectedFiles.slice();
+  filesInThisUpload.forEach(f => formData.append('photos', f));
 
   try {
     const res = await fetch('/upload', { method: 'POST', body: formData });
@@ -141,15 +147,19 @@ uploadBtn.addEventListener('click', async () => {
 
     const { geojson, total_uploaded, total_geotagged, upload_id, previews, errors } = data;
     currentUploadId = upload_id;
+    uploadedFiles = filesInThisUpload;
     closeSession(previousUploadId);
 
-    // Server-rendered previews (HEIC/HEIF) replace the unreliable client
-    // blob URL for those filenames; JPEG/PNG keep their existing blob URL.
+    // Server-rendered previews (HEIC/HEIF), keyed by photo_id, replace the
+    // unreliable client blob URL for that photo; JPEG/PNG keep their blob URL.
     if (previews) {
-      Object.entries(previews).forEach(([filename, dataUri]) => {
-        const existing = photoURLs.get(filename);
+      (geojson.features || []).forEach(feature => {
+        const p = feature.properties || {};
+        const dataUri = previews[p.photo_id];
+        if (!dataUri) return;
+        const existing = photoURLs[p.upload_index];
         if (existing && existing.startsWith('blob:')) URL.revokeObjectURL(existing);
-        photoURLs.set(filename, dataUri);
+        photoURLs[p.upload_index] = dataUri;
       });
     }
 
@@ -190,10 +200,12 @@ function plotGeoJSON(geojson) {
     const lon = coords[0], lat = coords[1];
     if (lat == null || lon == null) return;
 
-    const imgUrl = photoURLs.get(p.filename);
+    const imgUrl = photoURLs[p.upload_index];
     const marker = buildMarker(p, lat, lon, imgUrl);
     markerLayer.addLayer(marker);
-    mappedPhotos.push({ filename: p.filename, lat, lon, marker, photo_id: p.photo_id });
+    mappedPhotos.push({
+      filename: p.filename, lat, lon, marker, photo_id: p.photo_id, upload_index: p.upload_index,
+    });
   });
 
   // Zoom/pan to fit every plotted photo. Use try/catch since
@@ -222,21 +234,36 @@ function buildMarker(p, lat, lon, imgUrl) {
   if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
   if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
 
-  // Only show a thumbnail if there is a blob URL. A fresh file selection
-  // clears photoURLs, so marker data can outlive its image.
-  const imgTag = imgUrl
-    ? `<img src="${imgUrl}" alt="${escapeHtml(p.filename || '')}" onclick="openLightbox('${escapeHtml(imgUrl)}')">`
-    : '';
-  const hint = imgUrl ? `<div class="popup-hint">Click photo to zoom and pan</div>` : '';
+  // The popup is built from DOM nodes and textContent, never an HTML string:
+  // filename, camera, and datetime all come from the uploaded file and must
+  // never be parsed as markup. Only show a thumbnail if there is a URL. A fresh
+  // file selection clears photoURLs, so marker data can outlive its image.
+  const content = document.createElement('div');
+  content.className = 'photo-popup';
 
-  const content = `<div class="photo-popup">
-    ${imgTag}
-    ${hint}
-    <div class="popup-meta">
-      <strong>${escapeHtml(p.filename || 'Unknown')}</strong>
-      ${meta.join('<br>')}
-    </div>
-  </div>`;
+  if (imgUrl) {
+    const img = document.createElement('img');
+    img.src = imgUrl;
+    img.alt = p.filename || '';
+    img.addEventListener('click', () => openLightbox(imgUrl));
+    content.appendChild(img);
+
+    const hint = document.createElement('div');
+    hint.className = 'popup-hint';
+    hint.textContent = 'Click photo to zoom and pan';
+    content.appendChild(hint);
+  }
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'popup-meta';
+  const strong = document.createElement('strong');
+  strong.textContent = p.filename || 'Unknown';
+  metaEl.appendChild(strong);
+  meta.forEach((line, i) => {
+    if (i > 0) metaEl.appendChild(document.createElement('br'));
+    metaEl.appendChild(document.createTextNode(line));
+  });
+  content.appendChild(metaEl);
 
   marker.bindPopup(content, { maxWidth: 240 });
   return marker;
@@ -527,25 +554,44 @@ function populateResults(geojson) {
     const p = feature.properties || {};
     const coords = feature.geometry?.coordinates || [];
     const lon = coords[0], lat = coords[1];
-    const imgUrl = photoURLs.get(p.filename);
+    const imgUrl = photoURLs[p.upload_index];
 
     const li = document.createElement('li');
 
-    const thumbEl = imgUrl
-      ? `<img class="result-thumb" src="${imgUrl}" alt="">`
-      : `<div class="result-thumb-placeholder">No image</div>`;
+    // Built from DOM nodes and textContent so an uploaded filename is never parsed as markup.
+    if (imgUrl) {
+      const thumb = document.createElement('img');
+      thumb.className = 'result-thumb';
+      thumb.src = imgUrl;
+      thumb.alt = '';
+      li.appendChild(thumb);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'result-thumb-placeholder';
+      placeholder.textContent = 'No image';
+      li.appendChild(placeholder);
+    }
 
-    li.innerHTML = `
-      ${thumbEl}
-      <div class="result-text">
-        <div class="result-filename">${escapeHtml(p.filename || 'Unknown')}</div>
-        <div class="result-coords">${lat != null ? lat.toFixed(5) : '?'}, ${lon != null ? lon.toFixed(5) : '?'}</div>
-      </div>
-      <button class="remove-btn" title="Remove photo">×</button>
-    `;
-    li.querySelector('.remove-btn').addEventListener('click', e => {
+    const text = document.createElement('div');
+    text.className = 'result-text';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'result-filename';
+    nameEl.textContent = p.filename || 'Unknown';
+    const coordsEl = document.createElement('div');
+    coordsEl.className = 'result-coords';
+    coordsEl.textContent = `${lat != null ? lat.toFixed(5) : '?'}, ${lon != null ? lon.toFixed(5) : '?'}`;
+    text.append(nameEl, coordsEl);
+    li.appendChild(text);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'remove-btn';
+    removeBtn.title = 'Remove photo';
+    removeBtn.textContent = '×';
+    li.appendChild(removeBtn);
+
+    removeBtn.addEventListener('click', e => {
       e.stopPropagation();
-      removePhoto(p.filename, li);
+      removePhoto(p.photo_id, li);
     });
     li.addEventListener('click', () => {
       if (lat != null && lon != null) map.flyTo([lat, lon], 16);
@@ -554,8 +600,8 @@ function populateResults(geojson) {
   });
 }
 
-function removePhoto(filename, li) {
-  const idx = mappedPhotos.findIndex(ph => ph.filename === filename);
+function removePhoto(photoId, li) {
+  const idx = mappedPhotos.findIndex(ph => ph.photo_id === photoId);
   if (idx !== -1) {
     markerLayer.removeLayer(mappedPhotos[idx].marker);
     mappedPhotos.splice(idx, 1);
@@ -592,7 +638,7 @@ clearBtn.addEventListener('click', () => {
 // from the map.
 function setCrsForExport(epsg, name) {
   selectedEpsg = epsg;
-  crsSelectedLabel.textContent = `Using: ${escapeHtml(name)} (EPSG:${epsg})`;
+  crsSelectedLabel.textContent = `Using: ${name} (EPSG:${epsg})`;
   document.getElementById('custom-epsg').value = epsg;
   // Clear all CRS pickers so the EPSG field is the single source of truth.
   commonCrsSelect.value = '';
@@ -664,7 +710,8 @@ const SP_LABEL_ZOOM = 6; // show labels at or above this zoom level
 
 async function buildStatePlaneLayer() {
   const res = await fetch('/zone-geojson?type=state_plane');
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText || 'request failed');
 
   const layer = L.geoJSON(data, {
     style: {
@@ -737,7 +784,15 @@ document.getElementById('utm-datum').addEventListener('change', function () {
 document.getElementById('layer-sp').addEventListener('change', async function () {
   if (this.checked) {
     // Fetched once and cached. Toggling off/on re-adds the existing layer.
-    if (!spLayer) spLayer = await buildStatePlaneLayer();
+    if (!spLayer) {
+      try {
+        spLayer = await buildStatePlaneLayer();
+      } catch (err) {
+        this.checked = false;
+        statusEl.textContent = `State Plane zones unavailable: ${err.message}`;
+        return;
+      }
+    }
     spLayer.addTo(map);
   } else if (spLayer) {
     map.removeLayer(spLayer);
@@ -940,6 +995,8 @@ async function loadOiPreflight() {
     const formData = new FormData();
     formData.append('upload_id', currentUploadId);
     formData.append('photo_ids', visiblePhotoIds().join(','));
+    formData.append('epsg', currentEpsgValue());
+    if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
     const res = await fetch('/oriented-imagery/preflight', { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok) {
@@ -1031,19 +1088,24 @@ oiDownloadBtn.addEventListener('click', async () => {
       formData.append('export_name', exportName);
       res = await fetch('/oriented-imagery/reference', { method: 'POST', body: formData });
     } else {
-      const visibleNames = new Set(mappedPhotos.map(p => p.filename));
-      const filesToRepost = selectedFiles.filter(f => visibleNames.has(f.name));
-      if (filesToRepost.length === 0) {
+      // Match each mapped photo to its uploaded file by upload_index (never by
+      // filename), and send the photo_ids in that same order so the server can
+      // pair every file with its own session photo.
+      const repost = mappedPhotos
+        .filter(p => uploadedFiles[p.upload_index])
+        .map(p => ({ file: uploadedFiles[p.upload_index], photo_id: p.photo_id }));
+      if (repost.length === 0) {
         setOiRowStatus('No currently-mapped photos are available to repost. Upload again if the page was reloaded.', true);
         return;
       }
       const formData = new FormData();
       formData.append('upload_id', currentUploadId);
+      formData.append('photo_ids', repost.map(r => r.photo_id).join(','));
       formData.append('oriented_imagery_type', oiTypeSelect.value);
       formData.append('epsg', currentEpsgValue());
       if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
       formData.append('export_name', exportName);
-      filesToRepost.forEach(f => formData.append('photos', f));
+      repost.forEach(r => formData.append('photos', r.file));
       res = await fetch('/oriented-imagery/portable', { method: 'POST', body: formData });
     }
 
@@ -1077,5 +1139,6 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
