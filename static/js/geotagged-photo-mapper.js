@@ -986,6 +986,7 @@ oiModeButtons.forEach(btn => {
     oiReferenceFields.hidden = oiMode !== 'reference';
     oiPortableFields.hidden = oiMode !== 'portable';
     setOiRowStatus('');
+    loadOiPreflight();
   });
 });
 
@@ -996,6 +997,7 @@ async function loadOiPreflight() {
     formData.append('upload_id', currentUploadId);
     formData.append('photo_ids', visiblePhotoIds().join(','));
     formData.append('epsg', currentEpsgValue());
+    formData.append('mode', oiMode);
     if (customCrsInput.value.trim()) formData.append('custom_crs', customCrsInput.value.trim());
     const res = await fetch('/oriented-imagery/preflight', { method: 'POST', body: formData });
     const data = await res.json();
@@ -1047,9 +1049,13 @@ oiPreviewBtn.addEventListener('click', async () => {
       return;
     }
     const lines = (data.preview_paths || []).map(escapeHtml).join('<br>');
+    const dupes = (data.warnings || []).filter(w => w.warning.startsWith('duplicate_image_path'));
+    const dupeNote = dupes.length
+      ? `<br><br>${dupes.length} duplicate ImagePath${dupes.length !== 1 ? 's' : ''} excluded (first row kept): ${dupes.map(w => escapeHtml(w.filename)).join(', ')}`
+      : '';
     oiPreviewOutput.innerHTML = `
       <strong>${data.row_count} image${data.row_count !== 1 ? 's' : ''} would be included</strong>${data.excluded_count ? `, ${data.excluded_count} excluded` : ''}.<br>
-      ${lines || '(no images matched)'}<br><br>
+      ${lines || '(no images matched)'}${dupeNote}<br><br>
       <em>${escapeHtml(data.note || '')}</em>
     `;
     oiPreviewOutput.classList.add('visible');

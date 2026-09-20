@@ -192,7 +192,7 @@ def join_reference_path(kind: str, normalized_base: str, name: str) -> str:
     return normalized_base.rstrip('\\/') + sep + name
 
 
-MODE_A_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.tif', '.tiff'}
+MODE_A_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg'}
 MODE_A_WARN_EXTENSIONS = {'.png', '.heic', '.heif'}
 
 # ---------------------------------------------------------------------------
@@ -336,8 +336,10 @@ def build_row(
         return RowResult(row=None, status='error', warnings=[f'row_build_error: {e}'])
 
 
-# Per-batch counts for the Build Oriented Imagery preview panel.
-def build_preflight(rows_meta: list[dict]) -> dict:
+# Per-batch counts for the Build Oriented Imagery preview panel. In reference
+# mode, excluded_files matches the reference CSV: it also counts unsupported
+# extensions and duplicate ImagePaths (which depend on filenames, not the base).
+def build_preflight(rows_meta: list[dict], reference_mode: bool = False) -> dict:
     total = len(rows_meta)
     valid_gps = sum(1 for r in rows_meta if r.get('latitude') is not None)
     has_date = sum(1 for r in rows_meta if r.get('datetime'))
@@ -350,6 +352,8 @@ def build_preflight(rows_meta: list[dict]) -> dict:
     )
     excluded = total - valid_gps
     warnings = sum(1 for r in rows_meta if r.get('vendor_pose_detected'))
+    if reference_mode:
+        excluded = build_reference_export(rows_meta, '/', '', 'Nadir')['excluded_count']
     return {
         'total_files': total,
         'valid_gps': valid_gps,
@@ -400,7 +404,7 @@ def build_reference_export(
     rows = []
     file_warnings = []
     excluded = 0
-    seen_names: set[str] = set()
+    seen_paths: set[str] = set()
     for i, meta in enumerate(rows_meta, start=1):
         display_name = meta.get('filename', f'photo_{i}')
         ext = os.path.splitext(display_name)[1].lower()
@@ -419,19 +423,22 @@ def build_reference_export(
 
         clean_name = display_name.replace('\\', '').replace('/', '')
         image_path = join_reference_path(kind, normalized_base, clean_name)
-        if clean_name in seen_names:
-            # Same base + same name is the same ImagePath, so this row cannot point at its own image.
-            file_warnings.append({
-                'filename': display_name,
-                'warning': 'duplicate_filename: shares an ImagePath with another photo of the same name.',
-            })
-        seen_names.add(clean_name)
 
         result = build_row(meta, display_name, image_path, srs_label, oriented_imagery_type, i, pixels_normalized=False)
         if result.row is None:
             file_warnings.append({'filename': display_name, 'warning': '; '.join(result.warnings) or 'excluded'})
             excluded += 1
             continue
+        if image_path in seen_paths:
+            # Only rows that get written claim a path, so a first row excluded
+            # for another reason (e.g. no GPS) never shadows a later one.
+            file_warnings.append({
+                'filename': display_name,
+                'warning': f'duplicate_image_path: {image_path} is already used by an earlier photo; excluded.',
+            })
+            excluded += 1
+            continue
+        seen_paths.add(image_path)
         rows.append(result.row)
         if result.warnings:
             file_warnings.append({'filename': display_name, 'warning': '; '.join(result.warnings)})

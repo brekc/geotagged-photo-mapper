@@ -1054,6 +1054,7 @@ async def oriented_imagery_preflight(
     photo_ids: str = Form(default=''),
     epsg: str = Form(default=''),
     custom_crs: str = Form(default=''),
+    mode: str = Form(default=''),
 ):
     from features.oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
 
@@ -1062,7 +1063,7 @@ async def oriented_imagery_preflight(
     # that cannot be transformed shows up as excluded here, not only in the export.
     if epsg.strip() or custom_crs.strip():
         rows = _reproject_rows(rows, _resolve_target_crs(epsg, custom_crs))
-    return build_preflight(rows)
+    return build_preflight(rows, reference_mode=(mode == 'reference'))
 
 
 @app.post('/oriented-imagery/reference')
