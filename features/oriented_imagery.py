@@ -37,7 +37,10 @@ import zipfile
 from dataclasses import dataclass, field
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from PIL import Image, ImageOps
+from PIL import ImageOps
+
+from features.image_processing import open_checked_image
+from features.standard_exports import csv_safe_text
 
 ESRI_DOC_URL = 'https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html'
 
@@ -83,21 +86,6 @@ VENDOR_POSE_TAGS = (
 # ---------------------------------------------------------------------------
 # CSV safety
 # ---------------------------------------------------------------------------
-
-_CSV_DANGEROUS_PREFIXES = ('=', '+', '-', '@', '\t', '\r', '\n')
-
-
-# Escape a free-text CSV cell against formula injection (OWASP-style:
-# prefix a leading =, +, -, @, tab, CR, or LF with an apostrophe). Never
-# applied to numeric fields -- see _TEXT_FIELDS -- since quoting a
-# legitimate negative coordinate would corrupt it for GIS ingestion.
-def csv_safe_text(value) -> str:
-    if value is None:
-        return ''
-    text = str(value)
-    if text.startswith(_CSV_DANGEROUS_PREFIXES):
-        return "'" + text
-    return text
 
 
 def _format_cell(field_name: str, value) -> str:
@@ -490,7 +478,7 @@ def _sha256_bytes(data: bytes) -> str:
 # thumbnail data is never passed to save(), so none of it survives; only a
 # small, bounded ICC profile is carried over.
 def _build_derivative_jpeg(source_path: str) -> bytes:
-    with Image.open(source_path) as img:
+    with open_checked_image(source_path) as img:
         img.load()
         img = ImageOps.exif_transpose(img)
         img = img.convert('RGB')

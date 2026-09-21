@@ -28,14 +28,18 @@
       <div class="section">
         <div class="section-header">Upload</div>
 
-        <div id="drop-zone">
+        <div id="drop-zone" role="button" tabindex="0" aria-label="Choose photos to upload: drag and drop, or press Enter to browse">
           Drag &amp; drop photos here<br>
-          or <strong style="color:#0284c7">click to browse</strong>
+          or <strong class="drop-link">click to browse</strong>
         </div>
         <input id="file-input" type="file" accept="image/*,.heic,.heif" multiple hidden>
 
         <button id="upload-btn" type="button" disabled>Upload &amp; Map</button>
-        <div id="status">No files selected.</div>
+        <div id="status" role="status" aria-live="polite">No files selected.</div>
+        <details id="upload-errors" hidden>
+          <summary id="upload-errors-summary"></summary>
+          <ul id="upload-error-list"></ul>
+        </details>
       </div>
 
       <!-- Results list -->
@@ -57,10 +61,10 @@
 
         <div>
           <label for="flight-altitude">Flight Altitude AGL</label>
-          <div style="display:flex; gap:8px; align-items:center;">
+          <div class="inline-row">
             <input id="flight-altitude" type="number" min="0" step="any"
-              placeholder="e.g. 120" style="flex:1; width:auto;">
-            <select id="altitude-unit" style="width:auto; flex-shrink:0;">
+              placeholder="e.g. 120" class="inline-grow">
+            <select id="altitude-unit" class="inline-fixed">
               <option value="feet">feet</option>
               <option value="meters">meters</option>
             </select>
@@ -93,7 +97,7 @@
           </select>
         </div>
 
-        <div id="region-crs-section" style="display:flex; flex-direction:column; gap:10px;">
+        <div id="region-crs-section">
           <div>
             <label for="region-select">Region</label>
             <select id="region-select">
@@ -209,23 +213,23 @@
         <div>
           <label for="custom-epsg">EPSG Code</label>
           <input id="custom-epsg" type="text" placeholder="e.g. 26910">
-          <div style="font-size:13px; color:#475569; margin-top:4px;">
+          <div class="field-note">
             Note: entering an EPSG code here will override the region CRS selection above.
           </div>
         </div>
 
         <div>
-          <label for="custom-crs-input">Custom CRS <span style="font-weight:400; color:#64748b;">(optional)</span></label>
+          <label for="custom-crs-input">Custom CRS <span class="optional">(optional)</span></label>
           <textarea id="custom-crs-input" rows="3"
             placeholder="Paste a WKT or PROJ4 string for a project-specific datum or projection"></textarea>
           <input id="custom-crs-file" type="file" accept=".prj,.wkt,.txt">
-          <div style="font-size:13px; color:#475569; margin-top:4px;">
+          <div class="field-note">
             Uploading a .prj file fills in the field above. If either is filled in, it overrides the EPSG code above.
           </div>
         </div>
 
         <div>
-          <label for="source-path">Photo Source <span style="font-weight:400; color:#64748b;">(optional)</span></label>
+          <label for="source-path">Photo Source <span class="optional">(optional)</span></label>
           <input id="source-path" type="text"
             placeholder="e.g. C:\Photos\project or S3://bucket/folder">
         </div>
@@ -233,7 +237,7 @@
         <div>
           <label for="export-name">Export Filename</label>
           <input id="export-name" type="text" placeholder="photo_locations">
-          <div style="font-size:13px; color:#475569; margin-top:4px;">
+          <div class="field-note">
             No extension needed. It will be added automatically.
           </div>
         </div>
@@ -244,11 +248,11 @@
       <!-- Reference layers -->
       <div class="section">
         <div class="section-header">Reference Layers</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <label class="checkbox-label" style="margin-bottom:0;">
+        <div class="inline-row">
+          <label class="checkbox-label">
             <input type="checkbox" id="layer-utm"> UTM Zones
           </label>
-          <select id="utm-datum" style="font-size:12px; padding:2px 6px; width:auto;">
+          <select id="utm-datum" class="utm-datum-select" aria-label="UTM zone datum">
             <option value="wgs84">WGS 84</option>
             <option value="nad83">NAD83</option>
           </select>
@@ -262,7 +266,7 @@
   </div>
 
   <!-- Map -->
-  <div id="map"></div>
+  <div id="map" role="region" aria-label="Photo map"></div>
 
 </div>
 

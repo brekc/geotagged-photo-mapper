@@ -24,6 +24,12 @@ const basemaps = {
 basemaps['OpenStreetMap'].addTo(map);
 L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 
+// The stacked small-screen layout changes the map's height when sidebar
+// sections appear or disappear, which Leaflet cannot detect on its own.
+if (window.ResizeObserver) {
+  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+}
+
 // Photo markers are in their own layer group so they can all be cleared
 // without touching the reference layers.
 const markerLayer = L.layerGroup().addTo(map);
@@ -61,7 +67,48 @@ const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const uploadBtn = document.getElementById('upload-btn');
 const statusEl = document.getElementById('status');
+const uploadErrorsEl = document.getElementById('upload-errors');
+const uploadErrorsSummary = document.getElementById('upload-errors-summary');
+const uploadErrorList = document.getElementById('upload-error-list');
 const clearBtn = document.getElementById('clear-btn');
+
+// The server reports one entry per problem file ({ filename, error }). At most
+// this many are rendered; the rest are counted in a final "and N more" line.
+const MAX_UPLOAD_ERRORS_SHOWN = 100;
+
+function clearUploadErrors() {
+  uploadErrorList.replaceChildren();
+  uploadErrorsSummary.textContent = '';
+  uploadErrorsEl.hidden = true;
+}
+
+// Built from DOM nodes and textContent: filenames and messages come from the
+// uploaded files and must never be parsed as markup.
+function renderUploadErrors(errors) {
+  clearUploadErrors();
+  if (!errors || errors.length === 0) return;
+
+  errors.slice(0, MAX_UPLOAD_ERRORS_SHOWN).forEach(err => {
+    const li = document.createElement('li');
+    const nameEl = document.createElement('span');
+    nameEl.className = 'upload-error-name';
+    nameEl.textContent = err.filename || 'Unknown file';
+    const msgEl = document.createElement('span');
+    msgEl.className = 'upload-error-msg';
+    msgEl.textContent = err.error || 'Unknown error';
+    li.append(nameEl, msgEl);
+    uploadErrorList.appendChild(li);
+  });
+  if (errors.length > MAX_UPLOAD_ERRORS_SHOWN) {
+    const li = document.createElement('li');
+    li.textContent = `...and ${errors.length - MAX_UPLOAD_ERRORS_SHOWN} more.`;
+    uploadErrorList.appendChild(li);
+  }
+
+  uploadErrorsSummary.textContent = `${errors.length} file issue${errors.length !== 1 ? 's' : ''} (show or hide details)`;
+  uploadErrorsEl.hidden = false;
+  uploadErrorsEl.open = true;
+}
 
 let selectedFiles = [];
 // Files as they were when Upload was clicked, indexed by upload_index. Filenames
@@ -105,6 +152,14 @@ function setFiles(files) {
 // visible <div> isn't itself a form control.
 dropZone.addEventListener('click', () => fileInput.click());
 
+// The drop zone is a <div>, so give it the keyboard behavior of a button.
+dropZone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+
 fileInput.addEventListener('change', () => setFiles(fileInput.files));
 
 dropZone.addEventListener('dragover', e => {
@@ -125,6 +180,7 @@ uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) return;
 
   uploadBtn.disabled = true;
+  clearUploadErrors();
   statusEl.textContent = 'Uploading and extracting GPS data...';
 
   // A new upload replaces this tab's dataset; let the old session expire
@@ -165,10 +221,11 @@ uploadBtn.addEventListener('click', async () => {
 
     let statusMsg = `${total_geotagged} of ${total_uploaded} photo${total_uploaded !== 1 ? 's' : ''} had GPS data.`;
     if (errors && errors.length) {
-      statusMsg += ` ${errors.length} file${errors.length !== 1 ? 's' : ''} had issues (see console for details).`;
+      statusMsg += ` ${errors.length} file${errors.length !== 1 ? 's' : ''} had issues (details below).`;
       console.warn('Upload issues:', errors);
     }
     statusEl.textContent = statusMsg;
+    renderUploadErrors(errors);
 
     plotGeoJSON(geojson);
     populateResults(geojson);
@@ -630,6 +687,7 @@ clearBtn.addEventListener('click', () => {
   closeOrientedImageryModal();
   closeSession(currentUploadId);
   currentUploadId = null;
+  clearUploadErrors();
   statusEl.textContent = 'Cleared. Ready for new upload.';
 });
 

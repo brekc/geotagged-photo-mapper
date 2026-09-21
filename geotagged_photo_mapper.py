@@ -17,12 +17,10 @@ import shutil
 import tempfile
 import threading
 import time
-import unicodedata
 import urllib.request
 import uuid
 import zipfile
 from typing import List
-from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -37,7 +35,14 @@ from shapely.geometry import Point
 
 import pillow_heif
 from features import upload_sessions
-from features.oriented_imagery import csv_safe_text
+from features.image_processing import MAX_DECODED_PIXELS, check_upload_image, open_checked_image
+from features.standard_exports import (
+    EXPORT_MEDIA_TYPES,
+    EXPORT_SUFFIXES,
+    attachment_headers,
+    build_standard_export,
+    safe_export_name,
+)
 
 # Must run before any Image.open() call so .heic/.heif decode like any other format.
 pillow_heif.register_heif_opener()
@@ -340,12 +345,12 @@ ALLOWED_CONTENT_TYPES = {
 MAX_FILES_PER_UPLOAD = 60
 MAX_FILE_SIZE_BYTES = 40 * 1024 * 1024
 MAX_TOTAL_UPLOAD_BYTES = 400 * 1024 * 1024
-MAX_DECODED_PIXELS = 60_000_000
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 PREVIEW_MAX_DIMENSION = 1600
 
-# Guard against decompression-bomb uploads: Pillow raises DecompressionBombError
-# above this pixel count instead of silently decoding an oversized image.
+# Pillow only warns above this pixel count and raises DecompressionBombError
+# at a higher threshold (twice this count). The application limit itself is
+# enforced by the explicit width * height check in open_checked_image().
 Image.MAX_IMAGE_PIXELS = MAX_DECODED_PIXELS
 
 
@@ -367,65 +372,6 @@ def _display_filename(original_name: str) -> str:
     base = os.path.basename((original_name or 'photo').replace('\\', '/'))
     base = ''.join(ch for ch in base if ch.isprintable())
     return base[:200] or 'photo'
-
-
-_MAX_EXPORT_NAME_LENGTH = 100
-_WINDOWS_RESERVED_NAMES = {
-    'CON', 'PRN', 'AUX', 'NUL',
-    *(f'COM{i}' for i in range(1, 10)),
-    *(f'LPT{i}' for i in range(1, 10)),
-}
-
-
-# The one sanitizer for every user-supplied export name: it feeds both the
-# on-disk/layer names and the Content-Disposition header. Strips control
-# characters (CR, LF, NUL, U+2028...), drive prefixes, path separators and
-# traversal segments, replaces quotes, semicolons and other characters that
-# are unsafe in a header or on Windows, and bounds the length. Anything that
-# ends up empty falls back to `fallback`.
-def _safe_export_name(raw: str | None, fallback: str) -> str:
-    text = unicodedata.normalize('NFC', raw or '')
-    text = ''.join(
-        ch for ch in text
-        if unicodedata.category(ch)[0] != 'C' and unicodedata.category(ch) not in ('Zl', 'Zp')
-    )
-    text = re.sub(r'^\s*[A-Za-z]:', '', text.replace('\\', '/'))
-    segments = [seg for seg in text.split('/') if seg.strip() and seg.strip() not in ('.', '..')]
-    text = segments[-1] if segments else ''
-    text = re.sub(r'["\';:*?<>|%]', '_', text)
-    text = text.strip(' ._')[:_MAX_EXPORT_NAME_LENGTH].strip(' ._')
-    if not text or set(text) <= {'_'}:
-        return fallback
-    if text.split('.')[0].upper() in _WINDOWS_RESERVED_NAMES:
-        text = '_' + text
-    return text
-
-
-# Content-Disposition for a download. Non-ASCII names get an ASCII fallback
-# plus an RFC 5987 filename* so the header itself is always valid latin-1.
-def _attachment_headers(stem: str, suffix: str, extra: dict | None = None) -> dict:
-    filename = f'{stem}{suffix}'
-    try:
-        filename.encode('ascii')
-        disposition = f'attachment; filename="{filename}"'
-    except UnicodeEncodeError:
-        fallback = filename.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-        disposition = f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
-    headers = {'Content-Disposition': disposition}
-    if extra:
-        headers.update(extra)
-    return headers
-
-
-# Neutralize spreadsheet formula injection in text cells of a DataFrame before
-# CSV export. Only real strings are touched, so numeric columns (including
-# negative coordinates) stay numeric.
-def _csv_safe_frame(df):
-    df = df.copy()
-    for col in df.columns:
-        if df[col].dtype == object or pd.api.types.is_string_dtype(df[col]):
-            df[col] = df[col].map(lambda v: csv_safe_text(v) if isinstance(v, str) else v)
-    return df
 
 
 def _validate_upload_extension(filename: str, content_type: str | None) -> str:
@@ -456,7 +402,7 @@ def _build_heic_preview(path: str) -> str | None:
     # Browsers can't render HEIC/HEIF inline, so build a bounded JPEG preview
     # server-side. JPEG/PNG stay client-side (see photoURLs in the frontend).
     try:
-        with Image.open(path) as img:
+        with open_checked_image(path) as img:
             img.load()
             img = ImageOps.exif_transpose(img)  # the only pixel rotation applied -- avoids double rotation
             img = img.convert('RGB')
@@ -777,6 +723,7 @@ async def upload(
 
                 size = await _stream_upload_to_file(f, dest, min(MAX_FILE_SIZE_BYTES, remaining))
                 total_bytes += size
+                check_upload_image(dest)
 
                 saved_paths.append(dest)
                 display_names.append(display_name)
@@ -905,7 +852,7 @@ async def export(
     fmt = format.lower()
 
     # Sanitize for an internal layer name.
-    name = _safe_export_name(export_name, 'photo_locations')
+    name = safe_export_name(export_name, 'photo_locations')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
     rows = _get_session_rows(upload_id, photo_ids)
@@ -937,104 +884,13 @@ async def export(
 
     tmp_dir = tempfile.mkdtemp()
     try:
-        # Handlers for GIS file formats.
-        if fmt == 'csv':
-            csv_gdf = gdf.copy()
-            # Label lat-lon for geographic CRS and easting-northing for projected.
-            if target_crs.is_geographic:
-                csv_gdf['longitude'] = csv_gdf.geometry.x
-                csv_gdf['latitude'] = csv_gdf.geometry.y
-            else:
-                csv_gdf['easting'] = csv_gdf.geometry.x
-                csv_gdf['northing'] = csv_gdf.geometry.y
-            csv_gdf = _csv_safe_frame(csv_gdf.drop(columns='geometry'))
-            buf = io.StringIO()
-            csv_gdf.to_csv(buf, index=False)
-            return Response(
-                content=buf.getvalue().encode(),
-                media_type='text/csv',
-                headers=_attachment_headers(name, '.csv'),
-            )
-
-        elif fmt == 'filegdb':
-            # FileGDBs are directories and need zipped for download.
-            gdb_path = os.path.join(tmp_dir, f'{name}.gdb')
-            gdf.to_file(gdb_path, driver='OpenFileGDB', layer=name)
-            zip_path = os.path.join(tmp_dir, f'{name}_gdb.zip')
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(gdb_path):
-                    for file in files:
-                        abs_path = os.path.join(root, file)
-                        arc_name = os.path.relpath(abs_path, tmp_dir)
-                        zf.write(abs_path, arc_name)
-            with open(zip_path, 'rb') as fh:
-                content = fh.read()
-            return Response(
-                content=content,
-                media_type='application/zip',
-                headers=_attachment_headers(name, '_gdb.zip'),
-            )
-
-        elif fmt == 'geojson':
-            out_path = os.path.join(tmp_dir, f'{name}.geojson')
-            gdf.to_file(out_path, driver='GeoJSON')
-            with open(out_path, 'rb') as fh:
-                content = fh.read()
-            return Response(
-                content=content,
-                media_type='application/geo+json',
-                headers=_attachment_headers(name, '.geojson'),
-            )
-
-        elif fmt == 'geopackage':
-            out_path = os.path.join(tmp_dir, f'{name}.gpkg')
-            gdf.to_file(out_path, driver='GPKG', layer=name)
-            with open(out_path, 'rb') as fh:
-                content = fh.read()
-            return Response(
-                content=content,
-                media_type='application/geopackage+sqlite3',
-                headers=_attachment_headers(name, '.gpkg'),
-            )
-
-        elif fmt == 'kml':
-            # KML requires WGS 84 coordinates and the LIBKML driver to maintain gdf formatting.
-            kml_gdf = gdf.to_crs('EPSG:4326')
-            kml_gdf = kml_gdf.copy()
-            kml_gdf['Name'] = kml_gdf['filename']
-            out_path = os.path.join(tmp_dir, f'{name}.kml')
-            kml_gdf.to_file(out_path, driver='LIBKML')
-            with open(out_path, 'rb') as fh:
-                content = fh.read()
-            return Response(
-                content=content,
-                media_type='application/vnd.google-earth.kml+xml',
-                headers=_attachment_headers(name, '.kml'),
-            )
-
-        elif fmt == 'shapefile':
-            # ZIP the shapefile and all supporting files.
-            shp_dir = os.path.join(tmp_dir, 'shapefile')
-            os.makedirs(shp_dir)
-            shp_path = os.path.join(shp_dir, f'{name}.shp')
-            gdf.to_file(shp_path, driver='ESRI Shapefile')
-            zip_path = os.path.join(tmp_dir, f'{name}_shp.zip')
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
-                    candidate = os.path.join(shp_dir, f'{name}{ext}')
-                    if os.path.exists(candidate):
-                        zf.write(candidate, f'{name}{ext}')
-            with open(zip_path, 'rb') as fh:
-                content = fh.read()
-            return Response(
-                content=content,
-                media_type='application/zip',
-                headers=_attachment_headers(name, '_shp.zip'),
-            )
-
-        else:
+        if fmt not in EXPORT_SUFFIXES:
             raise HTTPException(status_code=400, detail=f'Unknown format: {fmt}')
-
+        return Response(
+            content=build_standard_export(fmt, gdf, name, target_crs, tmp_dir),
+            media_type=EXPORT_MEDIA_TYPES[fmt],
+            headers=attachment_headers(name, EXPORT_SUFFIXES[fmt]),
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1084,11 +940,11 @@ async def oriented_imagery_reference(
     except InvalidBaseLocation as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    name = _safe_export_name(export_name, 'oriented_imagery')
+    name = safe_export_name(export_name, 'oriented_imagery')
     return Response(
         content=result['csv'].encode('utf-8'),
         media_type='text/csv',
-        headers=_attachment_headers(name, '.csv', {
+        headers=attachment_headers(name, '.csv', {
             'X-Oriented-Imagery-Row-Count': str(result['row_count']),
             'X-Oriented-Imagery-Excluded-Count': str(result['excluded_count']),
         }),
@@ -1170,7 +1026,7 @@ async def oriented_imagery_portable(
         raise HTTPException(status_code=400, detail='photo_ids must list one id per uploaded photo.')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
-    name = _safe_export_name(export_name, 'oriented_imagery')
+    name = safe_export_name(export_name, 'oriented_imagery')
 
     tmp_dir = tempfile.mkdtemp()
     try:
@@ -1223,7 +1079,7 @@ async def oriented_imagery_portable(
         return Response(
             content=zip_bytes,
             media_type='application/zip',
-            headers=_attachment_headers(name, '.zip'),
+            headers=attachment_headers(name, '.zip'),
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1231,4 +1087,4 @@ async def oriented_imagery_portable(
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run('geotagged_photo_mapper:app', host='0.0.0.0', port=8000)
+    uvicorn.run('geotagged_photo_mapper:app', host='127.0.0.1', port=8000)

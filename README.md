@@ -4,29 +4,36 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 
 ---
 
-## Browser Demo (GitHub Pages)
+## Browser Demo
 
-A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs entirely in the browser, with no Python, no server, and no build tools. GPS coordinates are extracted from EXIF data using a built-in parser, and photos never leave the device.
+A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs in the browser with no Python, no server, and no build tools. GPS coordinates are read from EXIF data by a built-in parser, and photos are not uploaded anywhere.
 
 **Live demo:** https://brekc.github.io/geotagged-photo-mapper/geotagged-photo-mapper-demo/
 
-The full-featured Python app (export, CRS picker, etc.) requires the local/Docker setup below.
+The demo only exports a CSV. The CRS picker, the other export formats, and Oriented Imagery need the full Python app.
 
 ---
 
-## Local & Private
+## Full Python App
 
-This app runs as a **local web server** with no account or login. Photos are processed through short-lived, request-scoped temp files that are always cleaned up, and never leave this machine. Photo files and their metadata are never sent to any outside service.
+Runs on your own computer, or on a trusted LAN. There is no account or login. Photos you upload go to the computer hosting the app, are processed through short-lived, request-scoped temp files that are always cleaned up, and are never sent on to any outside service.
 
-The app does make these **outbound network requests**, none of which carry your photos or their coordinates:
+Three separate questions are easy to confuse:
 
-| Request | Made by | When | Destination |
-|---|---|---|---|
-| Leaflet JS/CSS | Your browser | Every page load | `unpkg.com` |
-| Inter font | Your browser | Every page load | `fonts.googleapis.com`, `fonts.gstatic.com` |
-| Basemap tiles (OpenStreetMap, Esri Light Gray, USGS Imagery + Topo) | Your browser | Whenever the map is shown; tile requests reveal the area you are viewing | `tile.openstreetmap.org`, `server.arcgisonline.com`, `basemap.nationalmap.gov` |
-| PROJ datum-shift grids | The server | The first export that needs a high-accuracy grid; cached to `data/proj_cache/` afterward | PROJ's grid CDN (`cdn.proj.org`) |
-| State Plane reference CSV and Census county shapefile | The server | The first time the State Plane layer is turned on; cached to `data/` afterward | `raw.githubusercontent.com`, `www2.census.gov` |
+- **Repository visibility:** the source code is public on GitHub. This says nothing about who can reach a running copy of the app.
+- **Runtime access:** who can open the app depends on how you start it. By default only the computer running it can (`localhost`). LAN mode lets other computers on your network use it.
+- **Uploaded-photo privacy:** your photos and their coordinates reach only the computer hosting the app. If someone else hosts it, they receive your uploads.
+
+---
+
+## Network Access
+
+The app makes these outbound network requests. None of them carry your photos or their coordinates:
+
+- **Map tiles** (OpenStreetMap, Esri Light Gray, USGS Imagery + Topo), requested by your browser whenever the map is shown. Tile requests reveal the area you are viewing. Hosts: `tile.openstreetmap.org`, `server.arcgisonline.com`, `basemap.nationalmap.gov`.
+- **Fonts and assets** (Leaflet JS/CSS and the Inter font), requested by your browser on every page load. Hosts: `unpkg.com`, `fonts.googleapis.com`, `fonts.gstatic.com`.
+- **PROJ datum-shift grids**, requested by the server the first time an export needs a high-accuracy grid, then cached to `data/proj_cache/`. Host: PROJ's grid CDN (`cdn.proj.org`).
+- **First-use State Plane downloads**, requested by the server the first time the State Plane layer is turned on, then cached to `data/`: the State Plane reference CSV and the Census county shapefile. Hosts: `raw.githubusercontent.com`, `www2.census.gov`.
 
 Without internet access the app still starts and exports, but the map will have no basemap or Leaflet styling, exports may use lower-accuracy datum shifts, and the State Plane layer cannot be built (the server answers with an error instead of caching a bad result).
 
@@ -45,6 +52,14 @@ uvicorn geotagged_photo_mapper:app --host 0.0.0.0 --port 8000
 ```
 
 Other users then connect to the server machine's private IP, e.g. `http://192.168.1.25:8000`.
+
+With Docker, LAN access is a separate opt-in: publish the port on all host interfaces instead of only localhost.
+
+```bash
+docker run --rm -p 8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
+```
+
+LAN mode has no authentication and no TLS, is only for a trusted network, and must not be exposed directly to the internet.
 
 **Before doing this, understand what it does and does not protect:**
 
@@ -124,7 +139,7 @@ docker build -t geotagged-photo-mapper .
 ```
 
 ```bash
-docker run -p 8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
+docker run --rm -p 127.0.0.1:8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
 ```
 
 The `-v` flag mounts a named volume for the spatial data cache so it persists across container restarts.

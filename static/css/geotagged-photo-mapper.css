@@ -1,3 +1,11 @@
+:root {
+  --accent: #0284c7;
+  --accent-strong: #0369a1;
+  --danger: #dc2626;
+  --danger-strong: #b91c1c;
+  --text-muted: #475569;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -46,7 +54,7 @@ h1 {
 
 .subtitle {
   font-size: 14px;
-  color: #475569;
+  color: var(--text-muted);
   margin-top: 4px;
   line-height: 1.5;
 }
@@ -83,15 +91,17 @@ h1 {
   line-height: 1.6;
 }
 
+#drop-zone .drop-link { color: var(--accent); }
+
 #drop-zone:hover {
-  border-color: #0284c7;
-  color: #0369a1;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 
 #drop-zone.dragover {
-  border-color: #0284c7;
+  border-color: var(--accent);
   background: rgb(2 132 199 / 5%);
-  color: #0284c7;
+  color: var(--accent);
 }
 
 /* ── Buttons ── */
@@ -107,7 +117,7 @@ button {
 }
 
 #upload-btn {
-  background: #0284c7;
+  background: var(--accent);
   color: #fff;
 }
 
@@ -116,7 +126,7 @@ button {
   cursor: not-allowed;
 }
 
-#upload-btn:hover:not(:disabled) { background: #0369a1; }
+#upload-btn:hover:not(:disabled) { background: var(--accent-strong); }
 
 #download-btn {
   background: #059669;
@@ -128,9 +138,49 @@ button {
 /* ── Status text ── */
 #status {
   font-size: 13px;
-  color: #475569;
+  color: var(--text-muted);
   min-height: 18px;
   line-height: 1.5;
+}
+
+/* ── Per-file upload errors ── */
+#upload-errors {
+  font-size: 13px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+#upload-errors summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--danger-strong);
+}
+
+#upload-error-list {
+  list-style: none;
+  margin-top: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#upload-error-list li { line-height: 1.4; }
+
+.upload-error-name {
+  display: block;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.upload-error-msg {
+  display: block;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* ── Sections hidden by default ── */
@@ -157,14 +207,23 @@ textarea {
   resize: vertical;
 }
 
+:focus-visible,
+select:focus-visible,
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 select:focus, input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
-  border-color: #0284c7;
+  border-color: var(--accent);
 }
 
 input[type="file"] {
   width: 100%;
   font-size: 13px;
-  color: #475569;
+  color: var(--text-muted);
   margin-top: 6px;
 }
 
@@ -172,18 +231,58 @@ select option { background: #f8fafc; }
 
 label {
   font-size: 14px;
-  color: #475569;
+  color: var(--text-muted);
   display: block;
   margin-bottom: 4px;
 }
 
 #crs-selected-label {
   font-size: 14px;
-  color: #0284c7;
+  color: var(--accent);
   font-style: italic;
 }
 
 select:disabled { opacity: 0.45; cursor: not-allowed; }
+
+#region-crs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-row > .inline-grow {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.inline-row > .inline-fixed {
+  width: auto;
+  flex-shrink: 0;
+}
+
+select.utm-datum-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  width: auto;
+}
+
+.field-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.optional {
+  font-weight: 400;
+  color: #64748b;
+}
 
 /* ── CRS filter controls ── */
 #crs-filter-controls {
@@ -215,7 +314,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
-  color: #475569;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -223,11 +322,11 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
-.toggle-btn:hover { border-color: #0284c7; color: #0369a1; }
+.toggle-btn:hover { border-color: var(--accent); color: var(--accent-strong); }
 
 .toggle-btn.active {
-  background: #0284c7;
-  border-color: #0284c7;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
@@ -236,7 +335,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   align-items: center;
   gap: 6px;
   font-size: 14px;
-  color: #475569;
+  color: var(--text-muted);
   cursor: pointer;
   margin: 0;
 }
@@ -316,7 +415,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .result-coords {
   font-size: 13px;
-  color: #475569;
+  color: var(--text-muted);
 }
 
 /* ── Remove individual photo button ── */
@@ -337,7 +436,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .remove-btn:hover {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger);
   border-color: #fca5a5;
 }
 
@@ -352,12 +451,12 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Clear All button ── */
 #clear-btn {
-  background: #dc2626;
+  background: var(--danger);
   color: #fff;
   margin-top: 4px;
 }
 
-#clear-btn:hover { background: #b91c1c; }
+#clear-btn:hover { background: var(--danger-strong); }
 
 /* ── Oriented Imagery modal ── */
 #oi-modal {
@@ -428,7 +527,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .oi-notice {
   font-size: 13px;
-  color: #475569;
+  color: var(--text-muted);
   background: #f1f5f9;
   border-radius: 6px;
   padding: 10px 12px;
@@ -437,7 +536,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .oi-field { display: flex; flex-direction: column; gap: 6px; }
 
-.oi-required { color: #dc2626; font-weight: 600; font-size: 12px; }
+.oi-required { color: var(--danger); font-weight: 600; font-size: 12px; }
 
 .oi-hint {
   font-size: 12.5px;
@@ -479,7 +578,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 #oi-privacy-notice {
   font-size: 12.5px;
-  color: #0369a1;
+  color: var(--accent-strong);
   background: rgb(2 132 199 / 8%);
   border: 1px solid rgb(2 132 199 / 25%);
   border-radius: 6px;
@@ -489,11 +588,11 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 #oi-row-status {
   font-size: 13px;
-  color: #475569;
+  color: var(--text-muted);
   min-height: 18px;
 }
 
-#oi-row-status.oi-error { color: #dc2626; }
+#oi-row-status.oi-error { color: var(--danger); }
 
 #oi-download-btn {
   background: #059669;
@@ -518,7 +617,7 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .photo-popup .popup-hint {
   font-size: 12px;
-  color: #0284c7;
+  color: var(--accent);
   margin-bottom: 6px;
   text-align: center;
 }
@@ -594,6 +693,57 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   color: rgb(255 255 255 / 55%);
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* ── Small screens: sidebar stacks above the map ── */
+@media (width <= 768px) {
+  html, body {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  #app {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  #sidebar {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+    max-height: 55vh;
+    max-height: 55dvh;
+  }
+
+  #map {
+    flex: 1;
+    min-height: 45vh;
+    min-height: 45dvh;
+  }
+
+  /* 16px keeps iOS from zooming the page when a field is focused. */
+  select, input[type="text"], input[type="number"], textarea {
+    font-size: 16px;
+  }
+
+  button { min-height: 40px; }
+
+  .remove-btn { min-width: 32px; min-height: 32px; }
+
+  #oi-modal-panel {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  #lightbox-hint {
+    width: calc(100% - 32px);
+    white-space: normal;
+    text-align: center;
+  }
 }
 
 /* ── Scrollbar styling ── */
