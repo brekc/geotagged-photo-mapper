@@ -192,8 +192,8 @@ uvicorn geotagged_photo_mapper:app --reload
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns US State Plane zone polygons only (`type=state_plane`); UTM zone polygons are generated in the browser. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
 - **`POST /oriented-imagery/preflight`**: Per-file completeness counts for the Build Oriented Imagery panel
-- **`POST /oriented-imagery/reference`** / **`POST /oriented-imagery/reference-preview`**: Mode A -- builds `oriented_imagery.csv` pointing at images that already exist at a user-supplied local path, UNC path, or URL
-- **`POST /oriented-imagery/portable`**: Mode B -- re-receives the currently-included photos, re-extracts their metadata, converts them to privacy-stripped JPEG derivatives, and returns a portable ZIP package
+- **`POST /oriented-imagery/reference`** / **`POST /oriented-imagery/reference-preview`**: Mode A: builds `oriented_imagery.csv` pointing at images that already exist at a user-supplied local path, UNC path, or URL
+- **`POST /oriented-imagery/portable`**: Mode B: re-receives the currently-included photos, re-extracts their metadata, converts them to privacy-stripped JPEG derivatives, and returns a portable ZIP package
 
 ### Backend Modules
 
@@ -257,7 +257,7 @@ After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery t
 - **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Reference mode points to existing JPEG/JPG files; PNG/HEIC/HEIF are excluded with a warning. If several photos resolve to the same ImagePath, the first row is kept and later collisions are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
 - **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
 
-Only generic EXIF is understood (v1) -- no vendor pose adapters. Specifically:
+Only generic EXIF is supported; no vendor pose adapters are included. Specifically:
 - Pose/calibration fields (`CameraPitch`, `CameraRoll`, `Omega`, `Phi`, `Kappa`, `Matrix`, principal-point and distortion coefficients) are always left blank rather than guessed.
 - `CameraHeading` is populated only when `GPSImgDirectionRef` confirms true north; a magnetic heading is left blank with a warning instead of an invented declination correction.
 - Horizontal/vertical FOV is an approximate 35mm-equivalent estimate, never a calibration.
@@ -266,7 +266,9 @@ Only generic EXIF is understood (v1) -- no vendor pose adapters. Specifically:
 <a id="multi-user-sessions"></a>
 **Multi-User Sessions (Trusted LAN)**
 
-Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; unknown, expired, or deleted IDs fail closed. Random IDs prevent accidental cross-session mixing, but they are not authentication—anyone who obtains a valid ID and can reach the app can use that session. Removing a marker or clicking Clear All immediately changes what the next export includes.
+Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; unknown, expired, or deleted IDs fail closed. Random IDs prevent accidental cross-session mixing, but they are not
+authentication. Anyone who obtains a valid ID and can reach the app can use
+that session. Removing a marker or clicking Clear All immediately changes what the next export includes.
 
 This store is in-memory and **process-local**, so it only works behind a single Uvicorn worker (the default). A multi-worker deployment needs a shared external store (Redis, a database) instead, since a session created on one worker isn't visible to requests handled by another.
 

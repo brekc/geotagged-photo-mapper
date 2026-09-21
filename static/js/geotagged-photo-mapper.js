@@ -483,7 +483,6 @@ crsOptionsSelect.addEventListener('change', () => {
   clearCustomCrs();
 });
 
-// A non-empty custom CRS takes precedence at download time.
 function clearCustomCrs() {
   customCrsInput.value = '';
   customCrsFile.value = '';
@@ -891,7 +890,7 @@ lightboxClose.addEventListener('click', e => {
   closeLightbox();
 });
 
-// Close only when the backdrop—not the image—is clicked.
+// Close only when the backdrop, not the image, is clicked.
 lightboxStage.addEventListener('click', e => {
   if (e.target === lightboxStage) closeLightbox();
 });

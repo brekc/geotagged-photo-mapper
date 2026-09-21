@@ -1,7 +1,7 @@
 """Isolated, in-memory upload sessions for trusted-LAN use.
 
 Each upload receives a random `upload_id`. Sessions store only normalized
-metadata rows, random per-row `photo_id` values, and warnings—never photo bytes
+metadata rows, random per-row `photo_id` values, and warnings; never photo bytes
 or filesystem paths. A process-wide lock, 15-minute sliding expiration, and
 hard session/row limits bound access and memory use.
 
