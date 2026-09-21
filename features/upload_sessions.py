@@ -1,19 +1,13 @@
-"""features/upload_sessions.py
+"""Isolated, in-memory upload sessions for trusted-LAN use.
 
-Isolated, in-memory upload sessions so multiple users on the same trusted LAN
-never read or overwrite each other's mapped photos.
+Each upload receives a random `upload_id`. Sessions store only normalized
+metadata rows, random per-row `photo_id` values, and warnings—never photo bytes
+or filesystem paths. A process-wide lock, 15-minute sliding expiration, and
+hard session/row limits bound access and memory use.
 
-Each browser upload gets its own opaque, cryptographically random
-`upload_id`. A session holds only normalized metadata rows (the same
-primitive fields the map and exports already use, each with its own random
-`photo_id`) plus per-row warnings -- never raw photo bytes or filesystem paths.
-A single process-wide lock guards the store; a 15-minute sliding inactivity
-window and hard caps on session/row counts bound memory.
-
-This is an in-memory, process-local store, so it is only correct behind a
-single Uvicorn worker. A multi-worker or multi-process deployment needs a
-shared external store (Redis, a database) instead -- otherwise a session
-created on one worker is invisible to a request routed to another.
+The store is process-local and requires one Uvicorn worker. Multi-worker or
+multi-process deployments need a shared external store; otherwise requests
+cannot reliably reach sessions created by another worker.
 """
 
 import secrets
@@ -61,8 +55,7 @@ def _total_rows_locked() -> int:
 
 
 def _evict_oldest_locked() -> None:
-    # Bounded storage: drop the least-recently-accessed session to make room
-    # instead of growing without limit.
+    # Evict the least-recently-accessed session instead of exceeding the cap.
     if not _SESSIONS:
         return
     oldest_id = min(_SESSIONS, key=lambda uid: _SESSIONS[uid]['last_access'])
@@ -78,7 +71,7 @@ def _get_locked(upload_id: str, now: float) -> dict:
     return session
 
 
-# Start a new, empty session and return its opaque upload_id.
+# Create an empty session and return its opaque upload_id.
 def create_session() -> str:
     upload_id = secrets.token_urlsafe(32)
     now = _now()
@@ -95,11 +88,8 @@ def create_session() -> str:
     return upload_id
 
 
-# Replace a session's rows with freshly extracted features.
-#
-# Returns defensive copies of the features with a `photo_id` merged into
-# each one. Raises SessionNotFound for an unknown/expired id and
-# SessionLimitExceeded if the row-count bounds would be exceeded.
+# Replace a session's rows and return defensive copies with new `photo_id`
+# values. Unknown sessions and row-limit violations fail explicitly.
 def set_rows(upload_id: str, features: list[dict]) -> list[dict]:
     now = _now()
     with _LOCK:
@@ -127,13 +117,9 @@ def set_rows(upload_id: str, features: list[dict]) -> list[dict]:
         return result
 
 
-# Defensive copies of a session's rows, in upload order.
-#
-# If `photo_ids` is given, only rows present in BOTH the session and that
-# list are returned -- unknown/stale ids are silently dropped rather than
-# failing the whole request, since marker removal naturally shrinks the
-# set of ids a client sends. Raises SessionNotFound for an unknown/expired
-# upload_id (that check always fails closed).
+# Return defensive row copies in upload order. When `photo_ids` is supplied,
+# silently omit stale IDs because marker removal intentionally shrinks the
+# selection; an unknown or expired upload_id still fails closed.
 def get_rows(upload_id: str, photo_ids: list[str] | None = None) -> list[dict]:
     now = _now()
     with _LOCK:

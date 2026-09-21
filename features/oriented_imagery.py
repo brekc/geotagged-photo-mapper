@@ -1,28 +1,13 @@
-"""oriented_imagery.py
+"""Build Esri Oriented Imagery tables from mapped photo metadata.
 
-Builds an Oriented Imagery table (schema reference: ESRI_DOC_URL below)
-from photos already mapped by geotagged_photo_mapper.py.
+Only generic EXIF is supported. Camera pose and calibration fields remain blank
+unless a documented, fixture-tested adapter can map a camera or gimbal format
+without guessing. Detected vendor pose tags produce warnings instead.
 
-Only generic EXIF is understood in this version. Camera pose fields
-(CameraPitch/CameraRoll/Omega/Phi/Kappa/Matrix/principal-point/distortion)
-are always left blank: populating them requires a documented, fixture-tested
-adapter for a specific camera/gimbal metadata convention, and guessing would
-silently corrupt anyone's orientation data. When vendor-specific pose tags
-(e.g. DJI's drone-dji XMP fields) are detected, a row warning says so instead
-of converting them.
-
-Two export modes:
-
-  * Reference mode (Mode A) points ImagePath at images that already exist
-    somewhere the *end user's* machine can read (a local path, a UNC share,
-    or an http(s) URL) and writes only oriented_imagery.csv. The server
-    never opens those images -- it cannot verify the path actually resolves.
-
-  * Portable mode (Mode B) re-receives the currently-visible photos as
-    freshly reposted browser File uploads, re-extracts their metadata
-    server-side, converts each to a privacy-stripped, orientation-normalized
-    JPEG derivative, and packages oriented_imagery.csv + manifest.json +
-    README.txt + images/*.jpg into a ZIP.
+Reference mode writes a CSV pointing to existing JPEG files without opening or
+verifying their paths. Portable mode re-receives visible photos, re-extracts
+metadata, creates privacy-stripped and orientation-normalized JPEG derivatives,
+and packages them with the CSV, manifest, and README in a ZIP.
 """
 
 import csv
@@ -66,10 +51,8 @@ AUDIT_FIELDS = [
 
 ORIENTED_IMAGERY_FIELDS = CORE_FIELDS + AUDIT_FIELDS
 
-# Free-text fields that can carry attacker/camera-controlled strings and so
-# need CSV formula-injection escaping. Numeric fields are written as plain
-# numbers instead, since quoting a legitimate negative coordinate would
-# corrupt it for GIS ingestion.
+# Escape attacker- or camera-controlled text fields against CSV formula
+# injection. Keep numeric fields numeric, including negative coordinates.
 _TEXT_FIELDS = {
     'ImagePath', 'SRS', 'Name', 'AcquisitionDate', 'OrientedImageryType',
     'Matrix', 'Make', 'Model', 'MetadataSource', 'OrientationStatus',
@@ -122,11 +105,9 @@ class InvalidBaseLocation(ValueError):
     pass
 
 
-# Validate a Mode A base path/URL. Returns (kind, normalized) where
-# kind is 'local', 'unc', or 'url'. Raises InvalidBaseLocation otherwise.
-# This never touches the filesystem or network -- it cannot confirm the
-# location actually exists, only that its *shape* is safe to write into a
-# CSV that ArcGIS Pro will later resolve on someone else's machine.
+# Validate and normalize a reference-mode path or URL without accessing it.
+# The result is safe to write to CSV but may not resolve on the end user's
+# machine; invalid values raise InvalidBaseLocation.
 def validate_base_location(raw: str) -> tuple[str, str]:
     text = (raw or '').strip()
     if not text:
@@ -168,9 +149,8 @@ def validate_base_location(raw: str) -> tuple[str, str]:
     )
 
 
-# Join a validated, normalized base location (from validate_base_location)
-# and a bare filename using the separator that base uses: `/` for POSIX paths
-# and URLs (URL filenames are percent-encoded), `\` for drive-letter and UNC paths.
+# Join a validated base and filename with the correct separator; URL filenames
+# are percent-encoded.
 def join_reference_path(kind: str, normalized_base: str, name: str) -> str:
     if kind == 'url':
         parts = urlsplit(normalized_base)
@@ -205,9 +185,8 @@ def _orientation_rotation_degrees(orientation) -> tuple[int | None, bool]:
     return mapping.get(orientation, (None, False))
 
 
-# Approximate horizontal/vertical FOV from a 35mm-equivalent focal length,
-# assuming the standard 36x24mm reference frame. Explicitly labeled
-# approximate -- this is not a calibrated camera model.
+# Estimate FOV from a 35mm-equivalent focal length and 36x24 mm frame. This is
+# explicitly approximate, not a calibrated camera model.
 def _estimate_fov(focal_35mm, width, height, orientation) -> tuple[float | None, float | None]:
     if not focal_35mm or focal_35mm <= 0:
         return None, None
@@ -232,10 +211,8 @@ def build_row(
     sequence_order: int,
     pixels_normalized: bool,
 ) -> RowResult:
-    # Build one Oriented Imagery row from a normalized photo-metadata dict
-    # (the same shape geotagged_photo_mapper.extract_gps() produces).
-    # `pixels_normalized` is True in portable mode, where the derivative JPEG
-    # has already had EXIF orientation baked into its pixels.
+    # Build one row from normalized extract_gps() metadata. In portable mode,
+    # `pixels_normalized` means EXIF orientation is already baked into the JPEG.
     try:
         # `latitude`/`longitude` hold this row's X/Y already expressed in the
         # CRS named by srs_label (the caller reprojects before building rows).
@@ -324,9 +301,8 @@ def build_row(
         return RowResult(row=None, status='error', warnings=[f'row_build_error: {e}'])
 
 
-# Per-batch counts for the Build Oriented Imagery preview panel. In reference
-# mode, excluded_files matches the reference CSV: it also counts unsupported
-# extensions and duplicate ImagePaths (which depend on filenames, not the base).
+# Summarize metadata completeness for the preview panel. Reference-mode counts
+# also include unsupported extensions and duplicate ImagePaths.
 def build_preflight(rows_meta: list[dict], reference_mode: bool = False) -> dict:
     total = len(rows_meta)
     valid_gps = sum(1 for r in rows_meta if r.get('latitude') is not None)
@@ -367,9 +343,8 @@ def _safe_stem(name: str) -> str:
     return stem[:80] or 'photo'
 
 
-# Deterministic and collision-safe: the zero-padded sequence index
-# guarantees uniqueness even when two originals sanitize to the same
-# stem (e.g. IMG_0001.HEIC and IMG_0001.JPG).
+# The sequence index keeps names deterministic and collision-safe when
+# different originals sanitize to the same stem.
 def derivative_filename(index: int, original_display_name: str) -> str:
     return f'{index:04d}_{_safe_stem(original_display_name)}.jpg'
 
@@ -385,8 +360,7 @@ def build_reference_export(
     srs_label: str,
     oriented_imagery_type: str,
 ) -> dict:
-    # Build oriented_imagery.csv for Mode A. Returns a dict with the CSV
-    # text, a short preview of resolved paths, per-file warnings, and counts.
+    # Return the reference CSV, a short path preview, warnings, and counts.
     kind, normalized_base = validate_base_location(base_location)
 
     rows = []
@@ -474,9 +448,8 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-# Orientation-normalized, privacy-stripped JPEG derivative. EXIF/XMP/GPS/
-# thumbnail data is never passed to save(), so none of it survives; only a
-# small, bounded ICC profile is carried over.
+# Create an orientation-normalized JPEG without EXIF, XMP, GPS, thumbnail, or
+# serial metadata. Preserve only a small, bounded ICC profile.
 def _build_derivative_jpeg(source_path: str) -> bytes:
     with open_checked_image(source_path) as img:
         img.load()
@@ -491,9 +464,8 @@ def _build_derivative_jpeg(source_path: str) -> bytes:
         return buf.getvalue()
 
 
-# `key` is the file's position in the upload; it is matched against each
-# metadata row's `upload_index` so duplicate filenames never share metadata.
-# Without a key, rows fall back to matching by display name, in order.
+# Match `key` to `upload_index` so duplicate filenames keep distinct metadata;
+# unkeyed items fall back to display-name order.
 @dataclass
 class PortableItem:
     display_name: str
@@ -508,10 +480,8 @@ def build_portable_package(
     oriented_imagery_type: str,
     export_name: str,
 ) -> bytes:
-    # Build the full portable ZIP (csv + manifest + README + images/*.jpg)
-    # in memory. Raises PortablePackageTooLarge if the bounded size is
-    # exceeded. Caller is responsible for deleting `items[*].source_path`
-    # (request-scoped temp files) in a finally block.
+    # Build the portable ZIP in memory and enforce its size limit. The caller
+    # must delete request-scoped `items[*].source_path` files in a finally block.
     meta_by_key = {m['upload_index']: m for m in rows_meta if m.get('upload_index') is not None}
     unkeyed_by_name: dict[str, list[dict]] = {}
     for m in rows_meta:

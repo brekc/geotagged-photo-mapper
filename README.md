@@ -59,22 +59,17 @@ With Docker, LAN access is a separate opt-in: publish the port on all host inter
 docker run --rm -p 8000:8000 -v geotagged-photo-mapper-data:/app/data geotagged-photo-mapper
 ```
 
-LAN mode has no authentication and no TLS, is only for a trusted network, and must not be exposed directly to the internet.
+LAN mode has no authentication or TLS. Use it only on a trusted private
+network:
 
-**Before doing this, understand what it does and does not protect:**
-
-- Restrict inbound port 8000 to a trusted private network (e.g. a firewall rule, or simply an isolated LAN).
-- The application has **no login**.
-- The application has **no TLS**.
-- Upload IDs keep one person's dataset from being accidentally mixed with another's, but they are **not authentication** -- anyone who can reach the port can use the app, and anyone who obtains a valid upload ID can read that session.
-- **Do not** expose it directly to the internet.
-- **Do not** port-forward it.
-- **Do not** run it directly on a public cloud address.
-- **Do not** use it on public or guest Wi-Fi.
+- Restrict inbound port 8000 to that network.
+- Treat each `upload_id` as a private capability, not as authentication.
+- Do not port-forward the app or expose it on a public cloud address.
+- Do not use LAN mode on public or guest Wi-Fi.
 
 ---
 
-## Quick Start (Choose Your Own Adventure)
+## Quick Start
 
 ```bash
 git clone https://github.com/brekc/geotagged-photo-mapper.git
@@ -152,8 +147,6 @@ Then open **http://localhost:8000**.
 
 Requires Python 3.11+ and ExifTool on your `PATH` (see step 1 in Option A).
 
-
-
 ```bash
 python -m venv .venv
 ```
@@ -194,13 +187,21 @@ uvicorn geotagged_photo_mapper:app --reload
 ### Backend (Python / FastAPI)
 
 - **`POST /upload`**: Receives image files (JPEG, PNG, HEIC, HEIF), extracts GPS/camera EXIF via PyExifTool, stores the result in a new isolated upload session (see [Multi-User Sessions](#multi-user-sessions)), and returns a GeoJSON FeatureCollection plus the session's `upload_id`
-- **`POST /export`**: Reprojects a session's selected photos to the target CRS through GeoPandas and streams the requested file. Requires the matching `upload_id`; the optional `photo_ids` (a comma-separated list) restricts the export to those photos, which is how removed markers are left out
+- **`POST /export`**: Reprojects a session's selected photos to the target CRS through GeoPandas and returns the requested download. Requires the matching `upload_id`; the optional `photo_ids` (a comma-separated list) restricts the export to those photos, which is how removed markers are left out
 - **`DELETE /session/{upload_id}`** / **`POST /session/{upload_id}/close`**: Explicitly and idempotently deletes an upload session (Clear All uses the former; best-effort browser-unload cleanup uses the latter, since `navigator.sendBeacon()` can only POST)
 - **`GET /crs-search`**: Queries pyproj's CRS database by region name for the region CRS dropdown
 - **`GET /zone-geojson`**: Returns US State Plane zone polygons only (`type=state_plane`); UTM zone polygons are generated in the browser. State Plane boundaries are built from the Census Bureau county shapefile and a reference CSV, then cached to `data/`
 - **`POST /oriented-imagery/preflight`**: Per-file completeness counts for the Build Oriented Imagery panel
 - **`POST /oriented-imagery/reference`** / **`POST /oriented-imagery/reference-preview`**: Mode A -- builds `oriented_imagery.csv` pointing at images that already exist at a user-supplied local path, UNC path, or URL
 - **`POST /oriented-imagery/portable`**: Mode B -- re-receives the currently-included photos, re-extracts their metadata, converts them to privacy-stripped JPEG derivatives, and returns a portable ZIP package
+
+### Backend Modules
+
+- `geotagged_photo_mapper.py`: FastAPI setup, upload/EXIF workflow, CRS and State Plane behavior, route orchestration
+- `features/image_processing.py`: shared image decoding, corruption checks, and decoded-pixel limits
+- `features/standard_exports.py`: six standard GIS exports plus shared filename, header, and CSV safety
+- `features/oriented_imagery.py`: Oriented Imagery reference and portable-package construction
+- `features/upload_sessions.py`: isolated, bounded, process-local upload sessions
 
 ### Frontend (JavaScript / Leaflet.js)
 
@@ -265,7 +266,7 @@ Only generic EXIF is understood (v1) -- no vendor pose adapters. Specifically:
 <a id="multi-user-sessions"></a>
 **Multi-User Sessions (Trusted LAN)**
 
-Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; an unknown, expired, deleted, or foreign id fails closed (404), so two people sharing an instance can never read or overwrite each other's data. Removing a marker or clicking Clear All immediately changes what the next export includes.
+Each upload gets its own cryptographically random `upload_id` and a lock-protected, in-memory session holding only normalized metadata (never raw photo bytes or filesystem paths), with a 15-minute sliding expiration and bounded session/row counts. Every export requires the matching `upload_id`; unknown, expired, or deleted IDs fail closed. Random IDs prevent accidental cross-session mixing, but they are not authentication—anyone who obtains a valid ID and can reach the app can use that session. Removing a marker or clicking Clear All immediately changes what the next export includes.
 
 This store is in-memory and **process-local**, so it only works behind a single Uvicorn worker (the default). A multi-worker deployment needs a shared external store (Redis, a database) instead, since a session created on one worker isn't visible to requests handled by another.
 

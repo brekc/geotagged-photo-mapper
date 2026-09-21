@@ -170,14 +170,13 @@ def _zones_are_finite(gdf) -> bool:
     return bool(np.isfinite(gdf.geometry.bounds.to_numpy()).all())
 
 
-# The zone outlines are only a map overlay, so they do not need a sub-metre
-# datum shift. Reprojecting with a grid-based NAD83 -> WGS 84 operation makes
-# PROJ fetch datum grids over the network mid-transform; on a cold cache that
-# fetch fails inside the server and the transform silently yields infinite
-# coordinates. So this layer uses PROJ's grid-free operation (about 1-4 m,
-# invisible at map scale). PROJ networking itself stays enabled for exports.
+# Zone outlines are display-only and do not need a sub-metre datum shift.
+# A grid-based NAD83 -> WGS 84 transform can fetch grids mid-transform and
+# return infinite coordinates on a cold cache. Use PROJ's grid-free operation
+# here (about 1-4 m, invisible at map scale); exports still use network grids.
 def _reproject_zones_to_wgs84(zones_gdf):
-    from pyproj.transformer import TransformerGroup  # local: keeps the protected PROJ import block untouched
+    # Keep this import local so the protected PROJ import order stays unchanged.
+    from pyproj.transformer import TransformerGroup
 
     group = TransformerGroup(zones_gdf.crs, 'EPSG:4326', always_xy=True)
 
@@ -209,10 +208,9 @@ def _reproject_zones_checked(zones_gdf):
     )
 
 
-# Build US State Plane zones by joining a state plane reference CSV and the
-# Census Bureau's county boundaries. Dissolving by zone and caching the result
-# will keep the NAD83 zones as a reference layer. Raises StatePlaneUnavailable
-# (and caches nothing) if the inputs cannot be fetched or the result is invalid.
+# Join the State Plane reference CSV to Census county boundaries, dissolve by
+# zone, and cache the NAD83 reference layer. Invalid or unavailable input raises
+# StatePlaneUnavailable and leaves no cache.
 def _build_sp_zones(cache_path: str) -> dict:
     try:
         return _build_sp_zones_unchecked(cache_path)
@@ -302,7 +300,7 @@ def _get_sp_zones() -> dict:
         return data
 
 
-# Expand two-letter state and province codes to full names for CRS area-of-use matching.
+# Expand state and province abbreviations for CRS area-of-use matching.
 STATE_ABBR: dict[str, str] = {
     'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas',
     'CA': 'California', 'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware',
@@ -399,12 +397,12 @@ async def _stream_upload_to_file(upload: UploadFile, dest_path: str, max_bytes: 
 
 
 def _build_heic_preview(path: str) -> str | None:
-    # Browsers can't render HEIC/HEIF inline, so build a bounded JPEG preview
-    # server-side. JPEG/PNG stay client-side (see photoURLs in the frontend).
+    # Browsers cannot reliably render HEIC/HEIF, so build a bounded JPEG
+    # preview. JPEG and PNG previews remain client-side.
     try:
         with open_checked_image(path) as img:
             img.load()
-            img = ImageOps.exif_transpose(img)  # the only pixel rotation applied -- avoids double rotation
+            img = ImageOps.exif_transpose(img)  # Apply orientation once to avoid double rotation.
             img = img.convert('RGB')
             img.thumbnail((PREVIEW_MAX_DIMENSION, PREVIEW_MAX_DIMENSION))
             buf = io.BytesIO()
@@ -469,13 +467,9 @@ def _as_int(value):
         return None
 
 
-# Extract GPS and camera metadata via ExifTool. Returns (features, errors)
-# rather than raising on a bad photo, so one unreadable/missing-GPS file
-# never drops the rest of the batch.
-#
-# `upload_indexes[i]` is the position of file_paths[i] in the original upload.
-# It is stamped on each feature as `upload_index`, so photos that share a
-# filename can still be told apart and matched back to their uploaded file.
+# Return (features, errors) so one unreadable or missing-GPS photo does not
+# abort the batch. `upload_indexes` preserves original upload positions, which
+# keeps duplicate filenames distinct when the browser matches files to rows.
 def extract_gps(file_paths, display_names: list[str] | None = None, upload_indexes: list[int] | None = None):
     display_names = display_names or []
     features = []
@@ -556,9 +550,8 @@ def extract_gps(file_paths, display_names: list[str] | None = None, upload_index
 # ---------------------------------------------------------------------------
 
 
-# Convert extract_gps() dicts to a GeoJSON FeatureCollection string. Lat and Lon
-# will become point geometry, and the remaining fields will become properties
-# the frontend reads to build popups.
+# Convert extracted longitude/latitude to point geometry and keep the remaining
+# fields as GeoJSON properties for the frontend.
 def build_geojson(features):
     geometries = [Point(f['longitude'], f['latitude']) for f in features]
     properties = [
@@ -573,8 +566,8 @@ def build_geojson(features):
 # ---------------------------------------------------------------------------
 
 
-# Parse a WKT, PROJ4, or authority string into a CRS. Falls back to from_wkt() for
-# ESRI .prj files that from_user_input() can not classify.
+# Parse WKT, PROJ4, or an authority string. Fall back to from_wkt() for Esri
+# .prj content that from_user_input() cannot classify.
 def _parse_custom_crs(text: str) -> CRS:
     text = text.strip()
     try:
@@ -851,7 +844,6 @@ async def export(
 ):
     fmt = format.lower()
 
-    # Sanitize for an internal layer name.
     name = safe_export_name(export_name, 'photo_locations')
 
     target_crs = _resolve_target_crs(epsg, custom_crs)
@@ -859,7 +851,6 @@ async def export(
 
     gdf = _rows_geodataframe(rows)
 
-    # Add source if a path is provided.
     clean_source = source_path.strip()
     if clean_source:
         if not clean_source.endswith(('/', '\\')):
@@ -867,7 +858,6 @@ async def export(
             clean_source += sep
         gdf['source'] = gdf['filename'].apply(lambda fn: clean_source + fn)
 
-    # Add altitude if provided.
     try:
         alt_val = float(flight_altitude) if flight_altitude.strip() else None
     except ValueError:
@@ -905,7 +895,7 @@ async def oriented_imagery_preflight(
     custom_crs: str = Form(default=''),
     mode: str = Form(default=''),
 ):
-    from features.oriented_imagery import build_preflight  # deferred: avoids a circular import at module load
+    from features.oriented_imagery import build_preflight  # Deferred to avoid a module-load cycle.
 
     rows = _get_session_rows(upload_id, photo_ids)
     # With a CRS selected, count against the reprojected coordinates so a row
@@ -1059,7 +1049,7 @@ async def oriented_imagery_portable(
                 upload_indexes.append(upload_index)
                 items.append(PortableItem(display_name=display_name, source_path=dest, key=upload_index))
             except ValueError:
-                continue  # unsupported/oversized files are simply excluded from the package
+                continue  # Unsupported or oversized files are excluded from the package.
             finally:
                 await f.close()
 

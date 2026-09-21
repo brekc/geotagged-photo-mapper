@@ -15,9 +15,9 @@ class ImageUnreadable(ValueError):
     pass
 
 
-# Pillow only warns between MAX_IMAGE_PIXELS and twice that, and only raises
-# beyond it, so the limit is enforced here from the header dimensions, before
-# any pixel data is decoded. Every image decode goes through this.
+# Pillow warns at MAX_IMAGE_PIXELS and raises only above twice that value.
+# Enforce the app's limit from header dimensions before decoding any pixels;
+# all image decoding goes through this helper.
 def open_checked_image(path: str):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', Image.DecompressionBombWarning)

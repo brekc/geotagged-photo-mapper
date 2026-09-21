@@ -5,7 +5,7 @@
 // ======== MAP INIT ========
 const map = L.map('map').setView([20, 0], 2);
 
-// Three basemap choices and switchable from the layers control top-right.
+// Three basemaps, switchable from the layer control at top right.
 const basemaps = {
   'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -39,8 +39,8 @@ const markerLayer = L.layerGroup().addTo(map);
 // remove/clear buttons can find and remove the matching marker.
 let mappedPhotos = []; // { filename, lat, lon, marker, photo_id, upload_index }
 
-// Opaque id for this tab's upload session (see features/upload_sessions.py). Every
-// export/Oriented Imagery call sends it; the server refuses without a match.
+// Opaque ID for this tab's upload session. Every export request includes it;
+// the server fails closed without a matching session.
 let currentUploadId = null;
 
 function visiblePhotoIds() {
@@ -483,7 +483,7 @@ crsOptionsSelect.addEventListener('change', () => {
   clearCustomCrs();
 });
 
-// Highest-priority CRS source: non-empty textarea at download time overrides
+// A non-empty custom CRS takes precedence at download time.
 function clearCustomCrs() {
   customCrsInput.value = '';
   customCrsFile.value = '';
@@ -530,8 +530,7 @@ function currentEpsgValue() {
 }
 
 // ======== EXPORT / DOWNLOAD ========
-// File extension for each export format and matched to the
-// format-select dropdown and backend's /export format handlers.
+// Download suffixes aligned with the format selector and backend handlers.
 const FORMAT_EXT = {
   csv:        f => `${f}.csv`,
   filegdb:    f => `${f}.zip`,
@@ -665,7 +664,7 @@ function removePhoto(photoId, li) {
   }
   li.remove();
 
-  // Hide sections when data can be shown or exported.
+  // Hide data-dependent sections after the last photo is removed.
   if (mappedPhotos.length === 0) {
     document.getElementById('results-section').style.display = 'none';
     document.getElementById('oriented-imagery-section').style.display = 'none';
@@ -778,7 +777,7 @@ async function buildStatePlaneLayer() {
     },
     onEachFeature(f, lyr) {
       const p = f.properties;
-      // Strip datum prefix so tooltip reads "Washington North" not
+      // Strip the datum prefix so the tooltip reads "Washington North"
       // instead of "NAD83(2011) / Washington North".
       const shortName = p.name.includes(' / ') ? p.name.split(' / ')[1] : p.name;
       lyr.bindTooltip(shortName, {
@@ -892,7 +891,7 @@ lightboxClose.addEventListener('click', e => {
   closeLightbox();
 });
 
-// Clicking the backdrop closes the lightbox, and clicking the image must not
+// Close only when the backdrop—not the image—is clicked.
 lightboxStage.addEventListener('click', e => {
   if (e.target === lightboxStage) closeLightbox();
 });

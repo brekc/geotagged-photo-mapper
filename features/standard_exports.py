@@ -48,12 +48,9 @@ def csv_safe_text(value) -> str:
     return text
 
 
-# The one sanitizer for every user-supplied export name: it feeds both the
-# on-disk/layer names and the Content-Disposition header. Strips control
-# characters (CR, LF, NUL, U+2028...), drive prefixes, path separators and
-# traversal segments, replaces quotes, semicolons and other characters that
-# are unsafe in a header or on Windows, and bounds the length. Anything that
-# ends up empty falls back to `fallback`.
+# Sanitize every user-supplied export name once for layer names, disk paths,
+# and Content-Disposition. Remove controls, path syntax, traversal, and
+# Windows-unsafe characters; bound the length and fall back if nothing remains.
 def safe_export_name(raw: str | None, fallback: str) -> str:
     text = unicodedata.normalize('NFC', raw or '')
     text = ''.join(
@@ -115,7 +112,7 @@ def _export_csv(gdf, name, target_crs, tmp_dir) -> bytes:
 
 
 def _export_filegdb(gdf, name, target_crs, tmp_dir) -> bytes:
-    # FileGDBs are directories and need zipped for download.
+    # File geodatabases are directories and must be zipped for download.
     gdb_path = os.path.join(tmp_dir, f'{name}.gdb')
     gdf.to_file(gdb_path, driver='OpenFileGDB', layer=name)
     zip_path = os.path.join(tmp_dir, f'{name}_gdb.zip')
@@ -144,7 +141,7 @@ def _export_geopackage(gdf, name, target_crs, tmp_dir) -> bytes:
 
 
 def _export_kml(gdf, name, target_crs, tmp_dir) -> bytes:
-    # KML requires WGS 84 coordinates and the LIBKML driver to maintain gdf formatting.
+    # KML requires WGS 84; LIBKML preserves the GeoDataFrame's field layout.
     kml_gdf = gdf.to_crs('EPSG:4326')
     kml_gdf = kml_gdf.copy()
     kml_gdf['Name'] = kml_gdf['filename']
@@ -155,7 +152,7 @@ def _export_kml(gdf, name, target_crs, tmp_dir) -> bytes:
 
 
 def _export_shapefile(gdf, name, target_crs, tmp_dir) -> bytes:
-    # ZIP the shapefile and all supporting files.
+    # A shapefile download must include its supporting files.
     shp_dir = os.path.join(tmp_dir, 'shapefile')
     os.makedirs(shp_dir)
     shp_path = os.path.join(shp_dir, f'{name}.shp')
@@ -170,7 +167,6 @@ def _export_shapefile(gdf, name, target_crs, tmp_dir) -> bytes:
         return fh.read()
 
 
-# Handlers for GIS file formats.
 _EXPORT_HANDLERS = {
     'csv': _export_csv,
     'filegdb': _export_filegdb,
