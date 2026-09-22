@@ -1,10 +1,5 @@
-"""FastAPI backend for upload/EXIF extraction, isolated upload sessions,
-CRS lookup and State Plane reference data, standard GIS exports, and
-Oriented Imagery reference/portable exports.
-
-Persistent writes are limited to State Plane source/cache files and PROJ
-grid files under data/. Request-scoped upload/export files are created in
-temporary directories and removed after each request.
+"""Serve photo metadata, upload sessions, CRS tools, GIS exports, and Oriented
+Imagery packages through FastAPI.
 """
 
 import base64
@@ -170,10 +165,9 @@ def _zones_are_finite(gdf) -> bool:
     return bool(np.isfinite(gdf.geometry.bounds.to_numpy()).all())
 
 
-# Zone outlines are display-only and do not need a sub-metre datum shift.
-# A grid-based NAD83 -> WGS 84 transform can fetch grids mid-transform and
-# return infinite coordinates on a cold cache. Use PROJ's grid-free operation
-# here (about 1-4 m, invisible at map scale); exports still use network grids.
+# Zone outlines are display-only, so this uses PROJ's grid-free transform (~1-4 m off,
+# invisible at map scale) instead of a grid-based NAD83 -> WGS 84 transform, which can
+# return infinite coordinates mid-fetch on a cold cache. Exports still use network grids.
 def _reproject_zones_to_wgs84(zones_gdf):
     # Keep this import local so the protected PROJ import order stays unchanged.
     from pyproj.transformer import TransformerGroup
@@ -322,9 +316,7 @@ STATE_ABBR: dict[str, str] = {
     'QC': 'Quebec', 'SK': 'Saskatchewan', 'YT': 'Yukon',
 }
 
-# ---------------------------------------------------------------------------
 # Upload validation, limits, and filename safety
-# ---------------------------------------------------------------------------
 
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.heic', '.heif'}
 HEIC_EXTENSIONS = {'.heic', '.heif'}
@@ -411,9 +403,7 @@ def _build_heic_preview(path: str) -> str | None:
         return None
     return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
 
-# ---------------------------------------------------------------------------
 # GPS and camera metadata extraction
-# ---------------------------------------------------------------------------
 
 
 # Return the first non-None value. Safer than `or` since 0.0 is valid.
@@ -545,9 +535,7 @@ def extract_gps(file_paths, display_names: list[str] | None = None, upload_index
 
     return features, errors
 
-# ---------------------------------------------------------------------------
 # GeoJSON builder
-# ---------------------------------------------------------------------------
 
 
 # Convert extracted longitude/latitude to point geometry and keep the remaining
@@ -561,9 +549,7 @@ def build_geojson(features):
     gdf = gpd.GeoDataFrame(properties, geometry=geometries, crs='EPSG:4326')
     return gdf.to_json()
 
-# ---------------------------------------------------------------------------
 # Custom CRS parsing
-# ---------------------------------------------------------------------------
 
 
 # Parse WKT, PROJ4, or an authority string. Fall back to from_wkt() for Esri
@@ -606,11 +592,9 @@ def _srs_label(target_crs: CRS) -> str:
     return str(epsg) if epsg is not None else target_crs.to_wkt()
 
 
-# Transform each row's WGS 84 longitude/latitude into the target CRS through
-# the same GeoPandas/PROJ path the standard exports use. Returns copies whose
-# `longitude`/`latitude` hold the target CRS's X/Y (so Oriented Imagery X/Y
-# always agree with its SRS). A row whose result is not finite is flagged with
-# `reprojection_failed` and its coordinates blanked instead of exported.
+# Reproject each row's WGS 84 lon/lat into target_crs via the same GeoPandas/PROJ
+# path the standard exports use, so the returned X/Y always match the row's SRS. A
+# non-finite result is flagged `reprojection_failed` with its coordinates blanked.
 def _reproject_rows(rows: list[dict], target_crs: CRS) -> list[dict]:
     if not rows:
         return []
@@ -655,9 +639,7 @@ def _get_session_rows(upload_id: str, photo_ids_raw: str | None) -> list[dict]:
         raise HTTPException(status_code=400, detail='No data to export, upload photos first')
     return rows
 
-# ---------------------------------------------------------------------------
 # Routes
-# ---------------------------------------------------------------------------
 
 
 @app.get('/')

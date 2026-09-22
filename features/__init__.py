@@ -1,1 +1,1 @@
-"""Feature modules for image processing, exports, and upload sessions."""
+"""Group image handling, export, and upload-session features."""

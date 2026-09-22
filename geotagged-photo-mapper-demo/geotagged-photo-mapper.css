@@ -1,6 +1,6 @@
 /* Demo-specific styles, layered on top of geotagged-photo-mapper.css */
 
-/* ── Privacy notice ── */
+/* Privacy notice */
 .privacy-notice {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
@@ -11,13 +11,13 @@
   line-height: 1.5;
 }
 
-/* ── Drop zone hint line ── */
+/* Drop zone hint line */
 .drop-limit {
   font-size: 12px;
   color: #94a3b8;
 }
 
-/* ── Download CSV button ── */
+/* Download CSV button */
 #download-csv-btn {
   background: #059669;
   color: #fff;
@@ -26,23 +26,23 @@
 
 #download-csv-btn:hover { background: #047857; }
 
-/* ── Result timestamp line ── */
+/* Result timestamp line */
 .result-dt {
   font-size: 12px;
   color: #64748b;
 }
 
-/* ── Result items: no thumb, text only ── */
+/* Result items: no thumb, text only */
 #results-list li {
   align-items: center;
 }
 
-/* ── Popup: no image, tighter padding ── */
+/* Popup: no image, tighter padding */
 .photo-popup .popup-meta {
   min-width: 160px;
 }
 
-/* ── Mobile layout ── */
+/* Mobile layout */
 @media (width <= 768px) {
   html, body {
     overflow: auto;

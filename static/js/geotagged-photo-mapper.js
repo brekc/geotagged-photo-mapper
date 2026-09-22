@@ -1,8 +1,7 @@
 /* exported setCrsForExport */
-// setCrsForExport() is called by the inline handler generated in
-// zonePopupHtml(); keep it global and declare it above for linters.
+// setCrsForExport() is called by the inline onclick in zonePopupHtml(); keep it global for linters.
 
-// ======== MAP INIT ========
+// Map init
 const map = L.map('map').setView([20, 0], 2);
 
 // Three basemaps, switchable from the layer control at top right.
@@ -34,7 +33,7 @@ if (window.ResizeObserver) {
 // without touching the reference layers.
 const markerLayer = L.layerGroup().addTo(map);
 
-// ======== STATE ========
+// State
 // One entry per photo currently on the map, so the results list and the
 // remove/clear buttons can find and remove the matching marker.
 let mappedPhotos = []; // { filename, lat, lon, marker, photo_id, upload_index }
@@ -62,7 +61,7 @@ function closeSession(uploadId) {
 
 window.addEventListener('pagehide', () => closeSession(currentUploadId));
 
-// ======== FILE HANDLING ========
+// File handling
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const uploadBtn = document.getElementById('upload-btn');
@@ -175,7 +174,7 @@ dropZone.addEventListener('drop', e => {
   setFiles(e.dataTransfer.files);
 });
 
-// ======== UPLOAD ========
+// Upload
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) return;
 
@@ -245,7 +244,7 @@ uploadBtn.addEventListener('click', async () => {
   }
 });
 
-// ======== PLOT GEOJSON ========
+// Plot GeoJSON
 function plotGeoJSON(geojson) {
   markerLayer.clearLayers();
   mappedPhotos = [];
@@ -273,7 +272,7 @@ function plotGeoJSON(geojson) {
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
     }
   } catch (_) {
-    // Nothing valid to fit — fine.
+    // Nothing valid to fit, fine.
   }
 }
 
@@ -291,10 +290,9 @@ function buildMarker(p, lat, lon, imgUrl) {
   if (p.camera_model)       meta.push(`Camera: ${p.camera_model}`);
   if (p.altitude_m != null) meta.push(`Alt: ${Number(p.altitude_m).toFixed(1)} m / ${Number(p.altitude_ft).toFixed(1)} ft`);
 
-  // The popup is built from DOM nodes and textContent, never an HTML string:
-  // filename, camera, and datetime all come from the uploaded file and must
-  // never be parsed as markup. Only show a thumbnail if there is a URL. A fresh
-  // file selection clears photoURLs, so marker data can outlive its image.
+  // Built from DOM nodes and textContent, never HTML: filename, camera, and
+  // datetime come from the uploaded file and must never be parsed as markup.
+  // Thumbnail shown only if a URL exists; a new file selection clears photoURLs.
   const content = document.createElement('div');
   content.className = 'photo-popup';
 
@@ -326,7 +324,7 @@ function buildMarker(p, lat, lon, imgUrl) {
   return marker;
 }
 
-// ======== CRS SELECTION ========
+// CRS selection
 const regionSelect = document.getElementById('region-select');
 const crsOptionsSelect = document.getElementById('crs-options-select');
 const crsSelectedLabel = document.getElementById('crs-selected-label');
@@ -528,7 +526,7 @@ function currentEpsgValue() {
   return customEpsg !== '' ? customEpsg : String(selectedEpsg);
 }
 
-// ======== EXPORT / DOWNLOAD ========
+// Export / download
 // Download suffixes aligned with the format selector and backend handlers.
 const FORMAT_EXT = {
   csv:        f => `${f}.csv`,
@@ -597,7 +595,7 @@ document.getElementById('download-btn').addEventListener('click', async (e) => {
   }
 });
 
-// ======== RESULTS LIST ========
+// Results list
 function populateResults(geojson) {
   const list = document.getElementById('results-list');
   list.innerHTML = '';
@@ -673,7 +671,7 @@ function removePhoto(photoId, li) {
   }
 }
 
-// ======== CLEAR ALL ========
+// Clear all
 clearBtn.addEventListener('click', () => {
   mappedPhotos = [];
   markerLayer.clearLayers();
@@ -689,7 +687,7 @@ clearBtn.addEventListener('click', () => {
   statusEl.textContent = 'Cleared. Ready for new upload.';
 });
 
-// ======== REFERENCE LAYERS ========
+// Reference layers
 // Click "Use for export" in a zone popup to set that zone's CRS directly
 // from the map.
 function setCrsForExport(epsg, name) {
@@ -726,7 +724,7 @@ function zonePopupHtml(name, epsg, area) {
   </div>`;
 }
 
-// ── UTM Zones ──
+// UTM zones
 // UTM zones are simple 6° rectangles generated client-side, unlike State
 // Plane's irregular county-based borders which need a server fetch.
 function buildUtmLayer(datum) {
@@ -761,7 +759,7 @@ function buildUtmLayer(datum) {
   });
 }
 
-// ── US State Plane Zones ──
+// US State Plane zones
 const SP_LABEL_ZOOM = 6; // show labels at or above this zoom level
 
 async function buildStatePlaneLayer() {
@@ -855,7 +853,7 @@ document.getElementById('layer-sp').addEventListener('change', async function ()
   }
 });
 
-// ======== LIGHTBOX ========
+// Lightbox
 const lightbox = document.getElementById('lightbox');
 const lightboxStage = document.getElementById('lightbox-stage');
 const lightboxImg = document.getElementById('lightbox-img');
@@ -936,7 +934,7 @@ document.addEventListener('mouseup', () => {
   lightboxImg.classList.remove('dragging');
 });
 
-// ======== SOURCE PATH AUTO-SLASH ========
+// Source path auto-slash
 // On blur, ensure the path ends in a separator so the backend can safely
 // concatenate it with each filename.
 document.getElementById('source-path').addEventListener('blur', function () {
@@ -949,7 +947,7 @@ document.getElementById('source-path').addEventListener('blur', function () {
   }
 });
 
-// ======== ORIENTED IMAGERY ========
+// Oriented Imagery
 const oiModal = document.getElementById('oi-modal');
 const oiModalPanel = document.getElementById('oi-modal-panel');
 const oiOpenBtn = document.getElementById('oi-open-btn');
@@ -1195,7 +1193,7 @@ oiDownloadBtn.addEventListener('click', async () => {
   }
 });
 
-// ======== UTILITIES ========
+// Utilities
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')

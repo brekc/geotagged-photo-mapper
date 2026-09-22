@@ -1,14 +1,4 @@
-"""Build Esri Oriented Imagery tables from mapped photo metadata.
-
-Only generic EXIF is supported. Camera pose and calibration fields remain blank
-unless a documented, fixture-tested adapter can map a camera or gimbal format
-without guessing. Detected vendor pose tags produce warnings instead.
-
-Reference mode writes a CSV pointing to existing JPEG files without opening or
-verifying their paths. Portable mode re-receives visible photos, re-extracts
-metadata, creates privacy-stripped and orientation-normalized JPEG derivatives,
-and packages them with the CSV, manifest, and README in a ZIP.
-"""
+"""Build reference and portable Esri Oriented Imagery exports."""
 
 import csv
 import hashlib
@@ -29,9 +19,7 @@ from features.standard_exports import csv_safe_text
 
 ESRI_DOC_URL = 'https://doc.esri.com/en/arcgis-pro/latest/help/data/imagery/oriented-imagery-table.html'
 
-# ---------------------------------------------------------------------------
 # Table schema
-# ---------------------------------------------------------------------------
 
 # Documented Oriented Imagery table columns, in a stable order.
 CORE_FIELDS = [
@@ -61,14 +49,15 @@ _TEXT_FIELDS = {
 
 ORIENTED_IMAGERY_TYPES = ('Horizontal', 'Oblique', 'Nadir', '360', 'Inspection')
 
+# Detected but never mapped to CameraHeading/Omega/Phi/Kappa: only a documented,
+# fixture-tested adapter should translate vendor pose data. Detection here just
+# triggers a warning (see build_row) instead of guessing a value.
 VENDOR_POSE_TAGS = (
     'XMP:GimbalYawDegree', 'XMP:GimbalPitchDegree', 'XMP:GimbalRollDegree',
     'XMP:FlightYawDegree', 'XMP:FlightPitchDegree', 'XMP:FlightRollDegree',
 )
 
-# ---------------------------------------------------------------------------
 # CSV safety
-# ---------------------------------------------------------------------------
 
 
 def _format_cell(field_name: str, value) -> str:
@@ -91,9 +80,7 @@ def write_oriented_imagery_csv(rows: list[dict]) -> str:
     return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
 # Base-location (Mode A) validation
-# ---------------------------------------------------------------------------
 
 _ALLOWED_URL_SCHEMES = {'http', 'https'}
 _MAX_BASE_LOCATION_LENGTH = 500
@@ -163,9 +150,7 @@ def join_reference_path(kind: str, normalized_base: str, name: str) -> str:
 MODE_A_ALLOWED_EXTENSIONS = {'.jpg', '.jpeg'}
 MODE_A_WARN_EXTENSIONS = {'.png', '.heic', '.heif'}
 
-# ---------------------------------------------------------------------------
 # Row building
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -176,9 +161,8 @@ class RowResult:
 
 
 # EXIF Orientation -> (rotation degrees to correct for display, is_mirrored).
-# ImageRotation represents a plain rotation; it cannot express a mirror, so
-# mirrored orientations are reported via the warning list instead of
-# guessing a value.
+# ImageRotation can't express a mirror, so mirrored orientations are reported
+# via the warning list instead of guessing a value.
 def _orientation_rotation_degrees(orientation) -> tuple[int | None, bool]:
     mapping = {1: (0, False), 3: (180, False), 6: (270, False), 8: (90, False),
                2: (0, True), 4: (180, True), 5: (270, True), 7: (90, True)}
@@ -332,9 +316,7 @@ def build_preflight(rows_meta: list[dict], reference_mode: bool = False) -> dict
     }
 
 
-# ---------------------------------------------------------------------------
 # Filenames
-# ---------------------------------------------------------------------------
 
 
 def _safe_stem(name: str) -> str:
@@ -349,9 +331,7 @@ def derivative_filename(index: int, original_display_name: str) -> str:
     return f'{index:04d}_{_safe_stem(original_display_name)}.jpg'
 
 
-# ---------------------------------------------------------------------------
 # Mode A: reference existing images
-# ---------------------------------------------------------------------------
 
 
 def build_reference_export(
@@ -423,9 +403,7 @@ def build_reference_export(
     }
 
 
-# ---------------------------------------------------------------------------
 # Mode B: portable package
-# ---------------------------------------------------------------------------
 
 MAX_PORTABLE_ZIP_BYTES = 300 * 1024 * 1024
 _PORTABLE_JPEG_QUALITY = 90

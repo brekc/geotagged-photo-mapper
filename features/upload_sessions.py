@@ -1,20 +1,13 @@
-"""Isolated, in-memory upload sessions for trusted-LAN use.
-
-Each upload receives a random `upload_id`. Sessions store only normalized
-metadata rows, random per-row `photo_id` values, and warnings; never photo bytes
-or filesystem paths. A process-wide lock, 15-minute sliding expiration, and
-hard session/row limits bound access and memory use.
-
-The store is process-local and requires one Uvicorn worker. Multi-worker or
-multi-process deployments need a shared external store; otherwise requests
-cannot reliably reach sessions created by another worker.
-"""
+"""Store bounded, process-local upload sessions in memory."""
 
 import secrets
 import threading
 import time
 
 _LOCK = threading.Lock()
+# Process-local: rows live only in this worker's memory, never photo bytes or
+# filesystem paths. Multi-worker/multi-process deployments need a shared
+# external store, or requests may miss sessions created by another worker.
 _SESSIONS: dict[str, dict] = {}
 
 SESSION_TTL_SECONDS = 15 * 60

@@ -6,7 +6,7 @@ Upload geotagged photos and plot their locations on an interactive map. Export t
 
 ## Browser Demo
 
-A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs in the browser with no Python, no server, and no build tools. GPS coordinates are read from EXIF data by a built-in parser, and photos are not uploaded anywhere.
+A fully client-side version of the mapper lives in [`geotagged-photo-mapper-demo/`](geotagged-photo-mapper-demo/). It runs in the browser with no Python, no server, and no build tools. GPS coordinates are read from EXIF data by exifr, a bundled JavaScript library, and photos are not uploaded anywhere. Each session is capped at 10 photos.
 
 **Live demo:** https://brekc.github.io/geotagged-photo-mapper/geotagged-photo-mapper-demo/
 
@@ -83,7 +83,7 @@ cd geotagged-photo-mapper
 
 ### Option A: Conda
 
-1. Install ExifTool (system dependency):
+1. Install ExifTool (system dependency; optional here since `environment.yml` also installs it via conda-forge, but required for Option C):
    - **macOS:** `brew install exiftool`
    - **Linux (Ubuntu/Debian):** `sudo apt install libimage-exiftool-perl`
    - **Linux (Fedora/RHEL):** `sudo dnf install perl-Image-ExifTool`
@@ -176,8 +176,8 @@ uvicorn geotagged_photo_mapper:app --reload
 
 **Download**
 
-1. GeoPandas reprojects the GeoDataFrame to the selected CRS
-2. Optional metadata columns are appended: Photo Source path and Flight Altitude AGL
+1. Optional metadata columns are appended: Photo Source path and Flight Altitude AGL
+2. GeoPandas reprojects the GeoDataFrame to the selected CRS
 3. The file is written in the chosen format (GeoJSON, GeoPackage, File Geodatabase, Shapefile, KML, or CSV)
 
 ---
@@ -236,10 +236,10 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
   - Manual EPSG code override
   - Custom CRS: paste a WKT or PROJ4 string, or upload a `.prj` file, for a project-specific datum or projection that isn't in the EPSG registry; takes priority over the EPSG code field when filled in
 - CSV coordinate columns use `longitude`/`latitude` for geographic CRS and `easting`/`northing` for projected CRS
-- Custom export filename (sanitized: control characters, quotes, semicolons, path separators, drive prefixes and `..` are removed, and the length is capped)
+- Custom export filename (sanitized: control characters, drive prefixes, path separators, and `..` segments are stripped down to a single filename, remaining unsafe characters like quotes, colons, and pipes become underscores, and the length is capped)
 - Text cells in CSV output that begin with `=`, `+`, `-`, `@`, tab, CR, or LF are prefixed with an apostrophe so spreadsheets do not run them as formulas; numeric coordinates are left untouched
 - Photos are tracked by an internal `photo_id`, not by filename, so photos that share a filename (e.g. `IMG_0001.JPG` from two folders) stay separate and can be removed or exported independently
-- Datum shifts (e.g. NAD83(HARN) &harr; NAD83(2011)) are handled by pyproj/PROJ, not skipped or approximated as identical. The highest-accuracy shift grids aren't bundled with the install, so on first export needing one, PROJ fetches it from its CDN and caches it to `data/proj_cache/` for every export after; if the server has no internet access, exports still work, just at whatever accuracy the bundled grids allow instead of the best available
+- Datum shifts (e.g. NAD83(HARN) &harr; NAD83(2011)) are handled by pyproj/PROJ, not skipped or approximated as identical. The highest-accuracy shift grids aren't bundled with the install: PROJ fetches one from its CDN on first use and caches it to `data/proj_cache/` for later exports. Without server internet access, exports still work, just at the bundled grids' lower accuracy
 
 **Optional export metadata** (applied at download time, columns omitted if left blank)
 - **Photo Source**: a base path prepended to each filename, written to a `source` column (e.g. `S3://bucket/project/IMG_001.JPG`)
@@ -252,7 +252,7 @@ A single-page interface served from `templates/geotagged-photo-mapper.html`:
 
 **Oriented Imagery Export**
 
-After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery table (schema reference in [Relevant Resources](#relevant-resources) below) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection (`X`/`Y` are transformed into that CRS with the same GeoPandas/PROJ path as the standard exports, and `SRS` names it) and always states that "different cameras expose different metadata; missing values are left blank and are not inferred."
+After a successful upload, "Build Oriented Imagery" builds an Oriented Imagery table (schema reference in [Relevant Resources](#relevant-resources) below) from the mapped photos (the table only -- no separate Frames/Cameras tables). It reuses the sidebar's existing CRS selection (`X`/`Y` are transformed into that CRS with the same GeoPandas/PROJ path as the standard exports, and `SRS` names it). The dialog and, for the portable package, its README both state that missing metadata is left blank rather than inferred.
 
 - **Reference existing images**: writes `oriented_imagery.csv` with `ImagePath` pointing at a local path, UNC path, or http(s) URL you supply. Reference mode points to existing JPEG/JPG files; PNG/HEIC/HEIF are excluded with a warning. If several photos resolve to the same ImagePath, the first row is kept and later collisions are excluded with a warning. A preview shows a few resolved paths before download, but the server only validates the *shape* of the path/URL -- it can't confirm a path on your machine actually exists.
 - **Portable package (ZIP)**: reposts the currently-included photos, re-extracts their metadata, converts JPEG/PNG/HEIC/HEIF to orientation-normalized JPEG derivatives with EXIF/XMP/GPS/thumbnail/serial metadata stripped, and packages `oriented_imagery.csv` + `manifest.json` (source/derivative SHA-256 digests) + `README.txt` + `images/*.jpg` into one ZIP.
@@ -283,8 +283,8 @@ This store is in-memory and **process-local**, so it only works behind a single 
 | **[Pillow](https://python-pillow.org/) + [pillow-heif](https://github.com/bigcat88/pillow_heif)** | HEIC/HEIF decoding, JPEG preview/derivative generation, EXIF orientation handling |
 | **[GeoPandas](https://geopandas.org/)** | GeoDataFrame construction, spatial format I/O & CRS reprojection |
 | **[pandas](https://pandas.pydata.org/)** | Tabular data for CRS/zone joins |
-| **[Shapely](https://shapely.readthedocs.io/)** | Point geometry creation |
-| **[pyproj](https://pyproj4.github.io/pyproj/)** | CRS database search |
+| **[Shapely](https://shapely.readthedocs.io/)** | Point geometry creation & coordinate transforms |
+| **[pyproj](https://pyproj4.github.io/pyproj/)** | CRS parsing, database search, and datum-shift network grids |
 | **[Leaflet.js](https://leafletjs.com/)** | Interactive map (CDN) |
 | **[OpenStreetMap](https://www.openstreetmap.org/) / [Esri](https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer) / [USGS](https://basemap.nationalmap.gov/)** | Basemap tile options (no API key required) |
 

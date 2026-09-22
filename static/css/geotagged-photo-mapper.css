@@ -17,7 +17,7 @@ html, body {
   color: #1e293b;
 }
 
-/* ── Layout ── */
+/* Layout */
 #app {
   display: flex;
   height: 100vh;
@@ -37,7 +37,7 @@ html, body {
   flex: 1;
 }
 
-/* ── Sidebar chrome ── */
+/* Sidebar chrome */
 .sidebar-inner {
   padding: 20px 16px;
   display: flex;
@@ -59,7 +59,7 @@ h1 {
   line-height: 1.5;
 }
 
-/* ── Section blocks ── */
+/* Section blocks */
 .section {
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -78,7 +78,7 @@ h1 {
   letter-spacing: 0.8px;
 }
 
-/* ── Drop zone ── */
+/* Drop zone */
 #drop-zone {
   border: 2px dashed #94a3b8;
   border-radius: 6px;
@@ -104,7 +104,7 @@ h1 {
   color: var(--accent);
 }
 
-/* ── Buttons ── */
+/* Buttons */
 button {
   width: 100%;
   padding: 9px 14px;
@@ -135,7 +135,7 @@ button {
 
 #download-btn:hover { background: #047857; }
 
-/* ── Status text ── */
+/* Status text */
 #status {
   font-size: 13px;
   color: var(--text-muted);
@@ -143,7 +143,7 @@ button {
   line-height: 1.5;
 }
 
-/* ── Per-file upload errors ── */
+/* Per-file upload errors */
 #upload-errors {
   font-size: 13px;
   background: #fef2f2;
@@ -183,13 +183,13 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* ── Sections hidden by default ── */
+/* Sections hidden by default */
 #results-section,
 #oriented-imagery-section,
 #flight-details-section,
 #export-section { display: none; }
 
-/* ── Form controls ── */
+/* Form controls */
 select, input[type="text"], input[type="number"], textarea {
   width: 100%;
   background: #f8fafc;
@@ -284,7 +284,7 @@ select.utm-datum-select {
   color: #64748b;
 }
 
-/* ── CRS filter controls ── */
+/* CRS filter controls */
 #crs-filter-controls {
   display: none;
   flex-direction: column;
@@ -342,7 +342,7 @@ select.utm-datum-select {
 
 .checkbox-label input { cursor: pointer; }
 
-/* ── Zone label tooltips ── */
+/* Zone label tooltips */
 .zone-label {
   background: transparent;
   border: none;
@@ -355,7 +355,7 @@ select.utm-datum-select {
 }
 .zone-label::before { display: none; }
 
-/* ── Results list ── */
+/* Results list */
 #results-list {
   list-style: none;
   display: flex;
@@ -418,7 +418,7 @@ select.utm-datum-select {
   color: var(--text-muted);
 }
 
-/* ── Remove individual photo button ── */
+/* Remove individual photo button */
 .remove-btn {
   width: auto;
   flex-shrink: 0;
@@ -440,7 +440,7 @@ select.utm-datum-select {
   border-color: #fca5a5;
 }
 
-/* ── Secondary buttons (e.g. Build Oriented Imagery) ── */
+/* Secondary buttons (e.g. Build Oriented Imagery) */
 .secondary-btn {
   background: #e2e8f0;
   color: #1e293b;
@@ -449,7 +449,7 @@ select.utm-datum-select {
 
 .secondary-btn:hover { background: #cbd5e1; }
 
-/* ── Clear All button ── */
+/* Clear All button */
 #clear-btn {
   background: var(--danger);
   color: #fff;
@@ -458,7 +458,7 @@ select.utm-datum-select {
 
 #clear-btn:hover { background: var(--danger-strong); }
 
-/* ── Oriented Imagery modal ── */
+/* Oriented Imagery modal */
 #oi-modal {
   position: fixed;
   inset: 0;
@@ -604,7 +604,7 @@ select.utm-datum-select {
 #oi-download-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 
-/* ── Photo popup ── */
+/* Photo popup */
 .photo-popup img {
   width: 220px;
   height: 165px;
@@ -635,7 +635,7 @@ select.utm-datum-select {
   color: #0f172a;
 }
 
-/* ── Lightbox ── */
+/* Lightbox */
 #lightbox {
   display: none;
   position: fixed;
@@ -695,7 +695,7 @@ select.utm-datum-select {
   white-space: nowrap;
 }
 
-/* ── Small screens: sidebar stacks above the map ── */
+/* Small screens: sidebar stacks above the map */
 @media (width <= 768px) {
   html, body {
     overflow-x: hidden;
@@ -746,7 +746,7 @@ select.utm-datum-select {
   }
 }
 
-/* ── Scrollbar styling ── */
+/* Scrollbar styling */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }

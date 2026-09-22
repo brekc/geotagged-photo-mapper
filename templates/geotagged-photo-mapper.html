@@ -14,17 +14,14 @@
 <body>
 <div id="app">
 
-  <!-- Sidebar -->
   <div id="sidebar">
     <div class="sidebar-inner">
 
-      <!-- Title -->
       <div>
         <h1>Geotagged Photo Mapper</h1>
         <p class="subtitle">Upload geotagged photos to plot their locations on the map.</p>
       </div>
 
-      <!-- Upload section -->
       <div class="section">
         <div class="section-header">Upload</div>
 
@@ -42,20 +39,17 @@
         </details>
       </div>
 
-      <!-- Results list -->
       <div class="section" id="results-section">
         <div class="section-header">Geotagged Photos</div>
         <ul id="results-list"></ul>
         <button id="clear-btn" type="button">Clear All</button>
       </div>
 
-      <!-- Oriented Imagery section -->
       <div class="section" id="oriented-imagery-section">
         <div class="section-header">Oriented Imagery</div>
         <button id="oi-open-btn" type="button" class="secondary-btn">Build Oriented Imagery</button>
       </div>
 
-      <!-- Flight Details section -->
       <div class="section" id="flight-details-section">
         <div class="section-header">Flight Details (optional)</div>
 
@@ -72,7 +66,6 @@
         </div>
       </div>
 
-      <!-- Export section (hidden until geotagged photos are found) -->
       <div class="section" id="export-section">
         <div class="section-header">Export</div>
 
@@ -245,7 +238,6 @@
         <button id="download-btn" type="button">Download</button>
       </div>
 
-      <!-- Reference layers -->
       <div class="section">
         <div class="section-header">Reference Layers</div>
         <div class="inline-row">
@@ -265,12 +257,10 @@
     </div>
   </div>
 
-  <!-- Map -->
   <div id="map" role="region" aria-label="Photo map"></div>
 
 </div>
 
-<!-- Lightbox overlay -->
 <div id="lightbox">
   <button id="lightbox-close" type="button">Close</button>
   <div id="lightbox-stage">
@@ -281,7 +271,6 @@
   <div id="lightbox-hint">Scroll to zoom &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Double-click to reset</div>
 </div>
 
-<!-- Oriented Imagery modal -->
 <div id="oi-modal" role="dialog" aria-modal="true" aria-labelledby="oi-modal-title" hidden>
   <div id="oi-modal-backdrop"></div>
   <div id="oi-modal-panel" tabindex="-1">

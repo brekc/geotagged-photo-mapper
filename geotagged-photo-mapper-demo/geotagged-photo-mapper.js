@@ -1,4 +1,4 @@
-// ======== MAP INIT ========
+// Map init
 const map = L.map('map').setView([20, 0], 2);
 
 const basemaps = {
@@ -22,14 +22,14 @@ L.control.layers(basemaps, {}, { position: 'topright' }).addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
 
 
-// ======== STATE ========
+// State
 const MAX_PHOTOS = 10;
 let photos = []; // { id, filename, lat, lon, datetime, marker }
 // Filenames are not unique, so each photo gets its own id for removal.
 let nextPhotoId = 1;
 
 
-// ======== DOM REFS ========
+// DOM refs
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const statusEl = document.getElementById('status');
@@ -39,7 +39,7 @@ const clearBtn = document.getElementById('clear-btn');
 const downloadCsvBtn = document.getElementById('download-csv-btn');
 
 
-// ======== FILE HANDLING ========
+// File handling
 dropZone.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', () => {
@@ -142,7 +142,7 @@ async function handleFiles(fileList) {
 }
 
 
-// ======== MARKERS ========
+// Markers
 function addMarker(filename, lat, lon, datetime) {
   const marker = L.circleMarker([lat, lon], {
     radius: 8,
@@ -177,7 +177,7 @@ function fitMapToPhotos() {
 }
 
 
-// ======== RESULTS LIST ========
+// Results list
 function addResultItem(id, filename, lat, lon, datetime, marker) {
   const li = document.createElement('li');
   li.innerHTML = `
@@ -213,11 +213,9 @@ function removeDemoPhoto(id, marker, li) {
 }
 
 
-// ======== DOWNLOAD CSV ========
-// Quote a text cell and neutralize spreadsheet formula injection: a value that
-// starts with =, +, -, @, tab, CR, or LF gets a leading apostrophe. Only text
-// cells go through this; latitude/longitude stay plain numbers (negative
-// coordinates must not be altered).
+// Download CSV
+// Quote a text cell and neutralize CSV formula injection (leading apostrophe for text
+// starting with =, +, -, @, tab, CR, LF). Numeric lat/lon values are left untouched.
 function csvTextCell(value) {
   let text = String(value);
   if (/^[=+\-@\t\r\n]/.test(text)) text = "'" + text;
@@ -245,7 +243,7 @@ downloadCsvBtn.addEventListener('click', () => {
 });
 
 
-// ======== CLEAR ALL ========
+// Clear all
 clearBtn.addEventListener('click', () => {
   photos = [];
   markerLayer.clearLayers();
@@ -255,7 +253,7 @@ clearBtn.addEventListener('click', () => {
 });
 
 
-// ======== UTILITIES ========
+// Utilities
 function formatDatetime(dt) {
   if (dt instanceof Date) {
     const pad = n => String(n).padStart(2, '0');

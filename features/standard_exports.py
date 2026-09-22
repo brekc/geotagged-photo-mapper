@@ -1,4 +1,4 @@
-"""Standard GIS export builders and shared download-safety helpers."""
+"""Build standard GIS exports and enforce download safety."""
 
 import io
 import os

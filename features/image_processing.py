@@ -1,4 +1,4 @@
-"""Shared image-decoding safeguards for uploads and generated derivatives."""
+"""Decode and validate images for uploads and generated derivatives."""
 
 import warnings
 
