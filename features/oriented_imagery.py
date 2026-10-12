@@ -1,4 +1,6 @@
-"""Build reference and portable Esri Oriented Imagery exports."""
+"""Build reference and portable Esri Oriented Imagery exports.
+
+Validates base locations, converts normalized photo metadata into schema-aligned rows, and reports missing or approximate orientation values. Portable exports create privacy-scrubbed JPEG derivatives and a size-limited ZIP containing the imagery table, manifest, README, and images."""
 
 import csv
 import hashlib

@@ -1,4 +1,6 @@
-"""Build standard GIS exports and enforce download safety."""
+"""Build standard GIS exports and safe download metadata.
+
+Sanitizes export names and protects text fields from CSV formula injection. Serializes GeoDataFrames to CSV, File Geodatabase, GeoJSON, GeoPackage, KML, or Shapefile and returns the resulting download bytes."""
 
 import io
 import os
