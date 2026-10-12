@@ -1,6 +1,9 @@
 """Open and validate images under a decoded-pixel limit.
 
-Rejects oversized images before full decoding and distinguishes them from corrupt or unreadable uploads. Callers must close images returned by open_checked_image."""
+Rejects oversized images before full decoding and distinguishes them from
+corrupt or unreadable uploads. Callers must close images returned by
+open_checked_image.
+"""
 
 import warnings
 

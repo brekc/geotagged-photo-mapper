@@ -1,6 +1,10 @@
 """Manage bounded, process-local upload sessions in memory.
 
-Generates opaque session and photo IDs, stores normalized metadata instead of image bytes or file paths, and returns defensive copies under a lock. Sessions expire after 15 minutes of inactivity; unknown sessions and capacity limits fail explicitly."""
+Generates opaque session and photo IDs, stores normalized metadata instead of
+image bytes or file paths, and returns defensive copies under a lock. Sessions
+expire after 15 minutes of inactivity; unknown sessions and capacity limits
+fail explicitly.
+"""
 
 import secrets
 import threading
