@@ -1,5 +1,10 @@
-"""Serve photo metadata, upload sessions, CRS tools, GIS exports, and Oriented
-Imagery packages through FastAPI.
+"""Define the FastAPI backend for geotagged photo mapping and GIS export.
+
+Coordinates image uploads, EXIF/GPS extraction, isolated upload sessions, CRS
+selection, standard GIS exports, and Esri Oriented Imagery packages.
+
+At import time, registers HEIC/HEIF support and configures PROJ networking and
+cache paths. State Plane reference data is downloaded and cached when requested.
 """
 
 import base64
